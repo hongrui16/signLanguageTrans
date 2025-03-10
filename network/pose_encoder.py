@@ -13,7 +13,7 @@ class GraphConvolution(nn.Module):
 
         self.adj = adj  # adj: (N, N) - Adjacency matrix
 
-    def forward(self, x):
+    def forward(self, x, adj = None):
         """
         Args:
             x: (batch_size, T, N, C) - Pose features
@@ -21,7 +21,7 @@ class GraphConvolution(nn.Module):
         Returns:
             (batch_size, T, N, out_features)
         """
-        adj = self.adj
+        adj = self.adj if adj is None else adj  # Use default adjacency matrix if not provided
 
         batch_size, T, N, C = x.shape  # Extract shape
 
@@ -50,11 +50,11 @@ class PoseEncoder(nn.Module):
 
         # Step 2: Three-layer GCN (spatial modeling)
         self.gc1 = GraphConvolution(64, 64)
-        self.bn1 = nn.BatchNorm2d(64)
+        self.bn1 = nn.BatchNorm1d(64)
         self.gc2 = GraphConvolution(64, 128)
-        self.bn2 = nn.BatchNorm2d(128)
+        self.bn2 = nn.BatchNorm1d(128)
         self.gc3 = GraphConvolution(128, 256)
-        self.bn3 = nn.BatchNorm2d(256)
+        self.bn3 = nn.BatchNorm1d(256)
 
         self.adj = adj # Adjacency matrix (N, N)
 
@@ -70,6 +70,8 @@ class PoseEncoder(nn.Module):
             Tensor of shape (batch_size, T, N, 256)
         """
         adj = self.adj
+        # print(f'x.shape: {x.shape}') # (batch_size, T, N, C)
+        # print(f'adj.shape: {adj.shape}') # (N, N)
         
         batch_size, T, N, C = x.shape  # Keep original shape
 
@@ -84,11 +86,16 @@ class PoseEncoder(nn.Module):
 
         # Step 4: Pass to GCN
         x = self.gc1(x, adj)  # (batch_size, T, N, 64)
-        x = self.bn1(x)
+        bs, T, num_kpts, feature = x.shape
+        x = self.bn1(x.view(-1, feature)).view(bs, T, num_kpts, feature)
+        
         x = self.gc2(x, adj)  # (batch_size, T, N, 128)
-        x = self.bn2(x)
+        bs, T, num_kpts, feature = x.shape
+        x = self.bn2(x.view(-1, feature)).view(bs, T, num_kpts, feature)
+        
         x = self.gc3(x, adj)  # (batch_size, T, N, 256)
-        x = self.bn3(x)
+        bs, T, num_kpts, feature = x.shape
+        x = self.bn3(x.view(-1, feature)).view(bs, T, num_kpts, feature)
 
         return x  # (batch_size, T, N, 256)
 

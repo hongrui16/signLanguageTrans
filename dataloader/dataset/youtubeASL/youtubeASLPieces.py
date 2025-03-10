@@ -16,7 +16,7 @@ if __name__ == '__main__':
 
 from utils.mediapipe_kpts_mapping import MediapipeKptsMapping
 
-class YouTubeASL(Dataset):
+class YouTubeASLPieces(Dataset):
     def __init__(self, video_dir: str, num_frames_per_clip: int = 12, target_img_size = (224, 224), debug = False):
         """
         Initialize the YouTube ASL dataset loader for a single video and VTT files.
@@ -27,24 +27,26 @@ class YouTubeASL(Dataset):
             frame_sample_rate (int): Frames per second to sample from the video (default: 30 FPS).
         """
         self.video_dir = video_dir
+        if not os.path.exists(self.video_dir):
+            raise FileNotFoundError(f"Directory not found: {self.video_dir}")
         self.num_frames_per_clip = num_frames_per_clip
         self.target_img_size = target_img_size
         self.debug = debug
         self.keypoints_threshold = 0.1
+        self.anno_file = '/scratch/rhong5/dataset/youtubeASL_annotation.txt'
 
+        self.anno_data = self.parse_annotation(self.anno_file)
         
-        # Find video and VTT files
-        self.video_transcript_pairs = self._find_files()
+        print(f"Total clips in dataset: {len(self.anno_data)}")
+
+        # # Find video and VTT files
+        # self.video_transcript_pairs = self._find_files()
         
-        if len(self.video_transcript_pairs) == 0:
-            raise ValueError(f"No video or VTT files found in {video_dir}")
-        else:
-            print(f"Found {len(self.video_transcript_pairs)} video and VTT file pairs in {video_dir}")
-        
+        #        
         # Initialize MediaPipe solutions
-        self.mp_hands = mp.solutions.hands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=self.keypoints_threshold)
-        self.mp_pose = mp.solutions.pose.Pose(static_image_mode=False, min_detection_confidence=self.keypoints_threshold)
-        self.mp_face_mesh = mp.solutions.face_mesh.FaceMesh(static_image_mode=False, min_detection_confidence=self.keypoints_threshold)
+        # self.mp_hands = mp.solutions.hands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=self.keypoints_threshold)
+        # self.mp_pose = mp.solutions.pose.Pose(static_image_mode=False, min_detection_confidence=self.keypoints_threshold)
+        # self.mp_face_mesh = mp.solutions.face_mesh.FaceMesh(static_image_mode=False, min_detection_confidence=self.keypoints_threshold)
         
         self.hand_mapping = MediapipeKptsMapping.hand_keypoints_mapping
         self.face_mapping = MediapipeKptsMapping.face_keypoints_mapping
@@ -54,6 +56,20 @@ class YouTubeASL(Dataset):
         self.hand_indices = [value for key, value in self.hand_mapping.items()]  # Map to MediaPipe hand landmarks (0–20)
         self.body_indices = [value for key, value in self.body_mapping.items()]  # Map to MediaPipe body landmarks (0–8)
         self.face_indices = [value for key, value in self.face_mapping.items()]
+    
+    def parse_annotation(self, anno_file):
+        with open(anno_file, 'r') as f:
+            lines = f.readlines()
+        
+        anno_data = []
+        for line in lines:
+            video_name, vtt_name, timestamp, text = line.strip().split('||')
+            anno_data.append((video_name, vtt_name, timestamp, text))
+        
+        if self.debug:
+            anno_data = anno_data[:200]
+
+        return anno_data
 
     def _find_files(self) -> List[Tuple[str, str]]:
         """
@@ -263,7 +279,7 @@ class YouTubeASL(Dataset):
 
     def __len__(self) -> int:
         """Return the total number of clips in the dataset."""
-        return len(self.video_transcript_pairs)
+        return len(self.anno_data)
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, str, dict]:
         """
@@ -278,14 +294,21 @@ class YouTubeASL(Dataset):
             - text: String caption for the clip
             - keypoints_dict: Dict with 'hand', 'body', 'face' keys, each a list of (x, y, confidence)
         """
-        video_path, tt_path = self.video_transcript_pairs[idx]
 
-        # Read captions
-        captions = self._parse_vtt(tt_path)
+        self.mp_hands = mp.solutions.hands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=self.keypoints_threshold)
+        self.mp_pose = mp.solutions.pose.Pose(static_image_mode=False, min_detection_confidence=self.keypoints_threshold)
+        self.mp_face_mesh = mp.solutions.face_mesh.FaceMesh(static_image_mode=False, min_detection_confidence=self.keypoints_threshold)
 
-        timestamp_idx =  np.random.randint(0, len(captions))
+        video_name, vtt_name, timestamp, text = self.anno_data[idx]
 
-        start_time, end_time, text = captions[timestamp_idx]
+        start_time, end_time = timestamp.split(' --> ')
+        # print(f"Processing video {video_name}, text: {text}, start: {start_time}, end: {end_time}")
+
+        start_time = self._time_to_seconds(start_time)
+        end_time = self._time_to_seconds(end_time)
+
+        video_path = os.path.join(self.video_dir, video_name)
+        
         
         # Sample frames with hand filtering
         sampled_frames = self._sample_frames_with_hand_filter(video_path, start_time, end_time)
@@ -293,7 +316,7 @@ class YouTubeASL(Dataset):
     
 
         if sampled_frames is None or len(sampled_frames) == 0:
-            return self.__getitem__(np.random.randint(0, len(self.video_transcript_pairs)))
+            return self.__getitem__(np.random.randint(0, len(self.anno_data)))
 
         # Process each frame for keypoints
         hand_keypoints_all, body_keypoints_all, face_keypoints_all = [], [], []

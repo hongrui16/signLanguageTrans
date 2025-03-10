@@ -112,5 +112,7 @@ def get_encoder(encoder_name, device):
         feature_encoder = DINOv2FeatureEncoder(encoder_name='dinov2_vits14', use_patch_tokens=True, device=device)
         encoder_output_size = feature_encoder.output_dim
         ## 
-
+    else:
+        raise ValueError(f"Unsupported encoder: {encoder_name}")
+    
     return feature_encoder, encoder_output_size

@@ -1,3 +1,19 @@
+import os
+import absl.logging
+import logging
+
+# ✅ 强制 `absl` 只输出 ERROR 及以上的日志
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+absl.logging.set_verbosity(absl.logging.ERROR)
+logging.getLogger("absl").setLevel(logging.ERROR)
+logging.getLogger("tensorflow").setLevel(logging.ERROR)
+logging.getLogger("absl.logging").setLevel(logging.ERROR)
+logging.getLogger("absl.initialize_log").setLevel(logging.ERROR)
+os.environ["EGL_LOG_LEVEL"] = "error"  # 降低 EGL 日志级别
+os.environ["GLOG_minloglevel"] = "3"  # 只允许 ERROR 级别
+os.environ["MESA_DEBUG"] = "0"
+os.environ["MESA_LOG_LEVEL"] = "error"
+
 
 import torch
 import torch.nn as nn
@@ -11,6 +27,29 @@ import time
 import cv2
 import shutil
 import logging
+
+# # 3️⃣ 释放 GPU 显存，防止 OOM
+# torch.cuda.empty_cache()
+
+# # 屏蔽 OpenGL/EGL 的 INFO 级别日志
+# os.environ["GLOG_minloglevel"] = "3"
+# os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+# os.environ["EGL_LOG_LEVEL"] = "error"
+# os.environ["MESA_LOG_LEVEL"] = "error"
+
+# class NullWriter:
+#     def write(self, message):
+#         pass
+#     def flush(self):
+#         pass
+
+# sys.stdout = NullWriter()  # 屏蔽标准输出
+# sys.stderr = NullWriter()  # 屏蔽错误输出
+
+# # 继续导入其他库
+import torch.multiprocessing as mp
+
+
 from accelerate.logging import get_logger
 from accelerate import Accelerator
 from accelerate.state import PartialState
@@ -30,7 +69,9 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 
 from network.uni_sign_network import UniSignNetwork
 from network.feature_encoder import get_encoder
-from dataloader.dataset.youtubeASL.youtubeASL import YouTubeASL, YouTubeASLClip
+from dataloader.dataset.youtubeASL.youtubeASL import YouTubeASL
+from dataloader.dataset.youtubeASL.youtubeASLClip import YouTubeASLClip
+from dataloader.dataset.youtubeASL.youtubeASLPieces import YouTubeASLPieces
 from transformers import MBartTokenizer, MBartForConditionalGeneration
 
 
@@ -54,7 +95,7 @@ class ManoParaUnetDiffusion():
 
         
         log_path = os.path.join(self.log_dir, "info.log")
-        shutil.copyfile("config/config.py", os.path.join(self.log_dir, f"config_{slurm_job_id}.py"))
+        # shutil.copyfile("config/config.py", os.path.join(self.log_dir, f"config_{slurm_job_id}.py"))
 
         self.accelerator = Accelerator(
         # gradient_accumulation_steps=gradient_accumulation_steps,
@@ -83,17 +124,16 @@ class ManoParaUnetDiffusion():
 
         # Patch `info`, `warning`, `error`, `debug` methods
         self.logger.info = patched_log_method(self.logger.info)
-        self.logger.warning = patched_log_method(self.logger.warning)
+        # self.logger.warning = patched_log_method(self.logger.warning)
         self.logger.error = patched_log_method(self.logger.error)
-        self.logger.debug = patched_log_method(self.logger.debug)
+        # self.logger.debug = patched_log_method(self.logger.debug)
+        logging.getLogger("gl_context").setLevel(logging.ERROR)
+        logging.getLogger("gl_context_egl").setLevel(logging.ERROR)
 
 
-        
         self.logger.info(f"\n{os.path.basename(__file__)}\n", main_process_only=True)
         self.logger.info(f'logging_dir: {self.log_dir}', main_process_only=True)
         self.logger.info(f'output_ckpts_dir: {self.ckpt_dir}\n', main_process_only=True)
-
-
 
         self.epochs = 45
         self.logger.info(f"Training epochs: {self.epochs}", main_process_only=True)
@@ -101,7 +141,8 @@ class ManoParaUnetDiffusion():
         # use_condition = False        
         
         self.feature_encoder_name = 'dino_v2'
-        self.logger.info(f"feature encoder: {self.use_feature_encoder}", main_process_only=True)
+        self.feature_encoder_name = None
+        self.logger.info(f"feature encoder: {self.feature_encoder_name}", main_process_only=True)
         
         self.use_feature_encoder = False
         self.logger.info(f"Use use_feature_encoder: {self.use_feature_encoder}", main_process_only=True)
@@ -110,13 +151,9 @@ class ManoParaUnetDiffusion():
         dataset_name = 'youtubeASL'
         self.logger.info(f"Dataset name: {dataset_name}", main_process_only=True)
 
-
-
-
-
-        self.train_batch_size = 50
+        self.train_batch_size = 40
         if self.debug:
-            self.train_batch_size = 2
+            self.train_batch_size = 5
         
         self.logger.info(f"Train batch size: {self.train_batch_size}", main_process_only=True)
 
@@ -127,10 +164,11 @@ class ManoParaUnetDiffusion():
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.logger.info(f"Using device: {self.device}", main_process_only=True)
 
-        if self.feature_encoder:
-            self.feature_encoder, encoder_output_size = get_encoder(self.encoder_name, self.device)
+        if self.feature_encoder_name:
+            self.feature_encoder, encoder_output_size = get_encoder(self.feature_encoder_name, self.device)
         else:
             encoder_output_size = 0
+            self.feature_encoder = None
 
         num_keypoints = {}
         num_keypoints["lh"] = 21
@@ -145,7 +183,8 @@ class ManoParaUnetDiffusion():
             # DINOv2（低学习率）优化器
             self.optimizer_encoder = torch.optim.Adam(self.feature_encoder.parameters(), lr=1e-4)  # 比较小的学习率
 
-        self.UniSignModel = UniSignNetwork(num_keypoints, hidden_dim=256, LLM_name="facebook/mbart-large-50", device = 'cpu', tokenizer = self.tokenizer)
+        self.UniSignModel = UniSignNetwork(hidden_dim=256, LLM_name="facebook/mbart-large-50", device = self.device, tokenizer = self.tokenizer)
+        self.UniSignModel.float()
 
         # UniSignModel 的优化器
         self.optimizer_UniSignModel = torch.optim.Adam(self.UniSignModel.parameters(), lr=1e-4)
@@ -157,9 +196,9 @@ class ManoParaUnetDiffusion():
         
 
         self.UniSignModel.to(self.device)
-        self.feature_encoder.to(self.device)
-        self.tokenizer.to(self.device)
-
+        
+        if self.use_feature_encoder:
+            self.feature_encoder.to(self.device)
 
         self.logger.info("Dataloader configuration.", main_process_only=True)
         # transform = transforms.Compose([
@@ -168,28 +207,35 @@ class ManoParaUnetDiffusion():
         #     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # 标准化
         #     ])
 
-        data_dir = '/scratch/rhong5/datasets/youtubeASL'
-        train_dataset = YouTubeASL(data_dir)
+        data_dir = '/scratch/rhong5/dataset/youtube_ASL/'
+        # train_dataset = YouTubeASL(data_dir, debug = self.debug)
+        train_dataset = YouTubeASLPieces(data_dir, debug = self.debug) 
+
         self.logger.info(f"Train dataset dir: {data_dir}; sample num: {len(train_dataset)}", main_process_only=True)
         
-
-        self.train_loader = DataLoader(train_dataset, batch_size=self.train_batch_size, num_workers = 5, shuffle=True, drop_last=True, pin_memory=True)
+        if self.debug:
+            num_workers = 0
+        else:
+            num_workers = 4
+        self.train_loader = DataLoader(train_dataset, batch_size=self.train_batch_size, num_workers = num_workers, shuffle=True, drop_last=True, pin_memory=True)
         # self.val_loader = DataLoader(val_dataset, batch_size=self.train_batch_size, num_workers = 5, shuffle=False, drop_last=False, pin_memory=True)
         # self.test_loader = DataLoader(test_dataset, batch_size=self.train_batch_size, num_workers = 5, shuffle=False, drop_last=False, pin_memory=True)
+        self.logger.info(f'step per epoch: {len(self.train_loader)}', main_process_only=True)
 
 
 
         for batch in self.train_loader:
-            x_0 = batch[0]
-            if isinstance(x_0, torch.Tensor):
-                self.logger.info("Batch Shape:", x_0.shape, main_process_only=True)  #([64, 50])
+            frames_tensor, text, keypoints_dict = batch
+            if isinstance(frames_tensor, torch.Tensor):
+                self.logger.info(f"frames_tensor Shape: {frames_tensor.shape}", main_process_only=True)  #([64, 50])
             break
     
 
     def training(self, dataloader, epoch, mode='train'):
 
         self.UniSignModel.train()
-        self.feature_encoder.train()
+        if self.use_feature_encoder:
+            self.feature_encoder.train()
         
         epoch_loss = 0
 
@@ -207,6 +253,7 @@ class ManoParaUnetDiffusion():
         )
 
         torch.autograd.set_detect_anomaly(True)
+        self.logger.info(f"Start {mode} Epoch {epoch + 1}", main_process_only=True)
         for step, batch in enumerate(dataloader):
             if self.debug and step >= 5:
                 break
@@ -219,17 +266,16 @@ class ManoParaUnetDiffusion():
                 pass
             
             hand_keypoints = keypoints_dict['hand']
-            body_keypoints = keypoints_dict['body'].to(self.device)
-            face_keypoints = keypoints_dict['face'].to(self.device)
+            body_keypoints = keypoints_dict['body'].to(self.device).float()
+            face_keypoints = keypoints_dict['face'].to(self.device).float()
                 
-            left_hand_keypoints = hand_keypoints[:, :, :21, :].to(self.device)
-            right_hand_keypoints = hand_keypoints[:, :, 21:, :].to(self.device)
+            right_hand_keypoints = hand_keypoints[:, :, :21, :].to(self.device).float()
+            left_hand_keypoints = hand_keypoints[:, :, 21:, :].to(self.device).float()
 
             decoder_input_ids, targets = self.encode_text(text)
 
             logits, encoder_hidden = self.UniSignModel(left_hand_keypoints, right_hand_keypoints, body_keypoints, face_keypoints, decoder_input_ids = decoder_input_ids)
 
-        
             loss = self.compute_translation_loss(targets, logits)
             self.optimizer_UniSignModel.zero_grad()
             if self.use_feature_encoder:
@@ -244,7 +290,7 @@ class ManoParaUnetDiffusion():
 
             if step == 0:
                 ## print the gpu usage 
-                self.logger.info(f"GPU memory allocated: {torch.cuda.memory_allocated() / 1024 ** 3:.2f} GB at batch size: {self.batch_size} ", main_process_only=True)
+                self.logger.info(f"GPU memory allocated: {torch.cuda.memory_allocated() / 1024 ** 3:.2f} GB at batch size: {self.train_batch_size} ", main_process_only=True)
                 self.logger.info(f"GPU memory reserved: {torch.cuda.memory_reserved() / 1024 ** 3:.2f} GB", main_process_only=True)
 
         # print('epoch_noise_loss:', epoch_noise_loss)        
@@ -326,8 +372,9 @@ class ManoParaUnetDiffusion():
         self.best_loss = float('inf')
         loss_curve_filepath = f'{self.log_dir}/training_loss_{self.name_prefix}.jpg'
 
+        self.logger.info("Start training...", main_process_only=True)
         for epoch in range(self.epochs):
-            train_loss = self.training(self.train_loader, epoch, 'train', self.debug)
+            train_loss = self.training(self.train_loader, epoch, 'train')
             train_loss_history.append(train_loss)
 
 
@@ -351,7 +398,9 @@ class ManoParaUnetDiffusion():
                
             fig, axes = plt.subplots(1, num_subplots, figsize=(6 * num_subplots, 4))
             # Flatten the axes array for easier indexing
-            axes = axes.flatten()
+
+            if num_subplots == 1:
+                axes = [axes]
 
             # 第一张子图：train_noise_loss & val_noise_loss
             axes[0].plot(train_loss_history, label='Train Loss', marker='o', linestyle='-')
@@ -414,10 +463,12 @@ class ManoParaUnetDiffusion():
         self.logger.info(f'Loading model from: {ckpt_path}', main_process_only=True)
 
 if __name__ == '__main__':
+    mp.set_start_method("spawn", force=True)
+
     args = argparse.ArgumentParser()
     args.add_argument("--debug", action="store_true")
-    args.add_argument('--model_name', type=str, default='Unet2D_CRS_Cond', help='Model name, e.g., Unet2D, Unet2D_CRS_Cond, Unet2D_Linear_Cond')
     args.add_argument('--resume', type=str, default=None, help='Resume training from a checkpoint')
+    args.add_argument('--model_name', type=str, default='UniSign', help='Model name')
     args = args.parse_args()
 
 

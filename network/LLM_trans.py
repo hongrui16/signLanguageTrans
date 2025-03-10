@@ -12,9 +12,17 @@ class SignLanguageLLM(nn.Module):
             self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.model = AutoModelForSeq2SeqLM.from_pretrained(model_name)  # Use Seq2SeqLM version
 
+        # 解决 vocab size 不匹配的问题
+        self.model.config.vocab_size = self.tokenizer.vocab_size
+        self.model.resize_token_embeddings(self.tokenizer.vocab_size)
+
+
         # Linear layer to map 4C -> LLM embedding dim
         self.fc = nn.Linear(1024, self.model.config.hidden_size)  # hidden_size = 1024 for mbart-large-50
         self.norm = nn.LayerNorm(self.model.config.hidden_size)  # 添加归一化
+        print(f"Model vocab size: {self.model.config.vocab_size}")
+        print(f"Tokenizer vocab size: {self.tokenizer.vocab_size}")
+
 
     def forward(self, sign_features, mode="train", decoder_input_ids=None, attention_mask=None):
         """
