@@ -67,8 +67,10 @@ class mediapipeKptsMapping:
         self.face_keypoints_mapping = {
             0: 46, 1: 52, 2: 55,  # Right eyebrow
             3: 285, 4: 282, 5: 276,  # Left eyebrow
-            6: 61, 7: 40, 8: 37, 9: 0, 10: 267, 11: 270,  # Upper lip
-            12: 291, 13: 321, 14: 314, 15: 17, 16: 181, 17: 91  # Lower lip
+            6: 61, # right mouth corner
+            7: 40, 8: 37, 9: 0, 10: 267, 11: 270,  # Upper lip
+            12: 291, # left mouth corner
+            13: 321, 14: 314, 15: 17, 16: 181, 17: 91  # Lower lip
         }
 
         # Define the number of keypoints (18 for face)

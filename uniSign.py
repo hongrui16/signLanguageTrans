@@ -75,7 +75,7 @@ from dataloader.dataset.youtubeASL.youtubeASLPieces import YouTubeASLPieces
 from transformers import MBartTokenizer, MBartForConditionalGeneration
 
 
-class ManoParaUnetDiffusion():
+class UniSignTrans():
     def __init__(self, args):
         self.args = args
         self.debug = args.debug
@@ -151,7 +151,7 @@ class ManoParaUnetDiffusion():
         dataset_name = 'youtubeASL'
         self.logger.info(f"Dataset name: {dataset_name}", main_process_only=True)
 
-        self.train_batch_size = 40
+        self.train_batch_size = 5
         if self.debug:
             self.train_batch_size = 5
         
@@ -476,5 +476,5 @@ if __name__ == '__main__':
     # test_vec_diffusion()
     # interhand_diffusion_on_mano_para(args)
     # xD_pose_2dunet_diffusion_on_interhand(args)
-    manoDiffusion = ManoParaUnetDiffusion(args)
-    manoDiffusion.run_all()
+    uniSignTrans = UniSignTrans(args)
+    uniSignTrans.run_all()
