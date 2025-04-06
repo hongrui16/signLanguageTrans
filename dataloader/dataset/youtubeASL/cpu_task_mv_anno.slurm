@@ -2,7 +2,7 @@
 
 
 #SBATCH --partition=normal                    
-#SBATCH --job-name=youtubeasl                   
+#SBATCH --job-name=mv_youtubeasl                   
 #SBATCH --output=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/zlog/%u/%x-%N-%j.out  
 #SBATCH --error=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/zlog/%u/%x-%N-%j.err   
 #SBATCH --nodes=1
@@ -22,16 +22,7 @@ nvidia-smi
 module load gnu10                           
 module load python
 
-source /home/rhong5/py310Torch/bin/activate
-
-cd /home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/youtubeASL
-
-python youtubeASLPieces.py --start_idx 220000 --end_idx 227885
+cd /projects/kosecka/hongrui/dataset/youtubeASL
 
 
-# torchrun --nnodes=${NUM_NODES} --nproc_per_node=${GPUS_PER_NODE} train_VAE.py --debug 
-
-# torchrun --nnodes=1 --nproc_per_node=1 train_VAE.py --batch_size 10
-
-# salloc -p contrib-gpuq -q gpu --nodes=1 --ntasks-per-node=1 --gres=gpu:3g.40gb:1 --mem=40gb -t 0-24:00:00
-# salloc -p gpuq -q gpu --nodes=1 --ntasks-per-node=1 --gres=gpu:3g.40gb:1 --mem=40gb -t 0-24:00:00
+rsync -av --partial --append-verify /scratch/rhong5/dataset/youtubeASL_frames/ ./youtubeASL_frames/

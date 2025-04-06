@@ -25,7 +25,7 @@
 # #SBATCH --time=${TIME_LIMIT}                   # set to 24hr; please choose carefully
 # #SBATCH --cpus-per-task=${TOTAL_CPUS_PER_TASK}  # Number of CPU cores per task
 
-#SBATCH --partition=gpuq                    # need to set 'gpuq' or 'contrib-gpuq'  partition
+#SBATCH --partition=contrib-gpuq                    # need to set 'gpuq' or 'contrib-gpuq'  partition
 #SBATCH --qos=gpu                           # need to select 'gpu' QOS or other relvant QOS
 #SBATCH --job-name=unisign                   # vqgan, vqvae, vqdiffusion, gaussiandiffusion
 #SBATCH --output=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/Zlog/%u/%x-%N-%j.out   # Output file
@@ -33,7 +33,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1                # number of cores needed
 #SBATCH --gres=gpu:A100.80gb:1                # up to 8; only request what you need # gpu:A100.80gb:1 ; gpu:3g.40gb:1 
-#SBATCH --mem=80gb                # 100gb for InterHand26M, memory per CORE; total memory is 1 TB (1,000,000 MB), 
+#SBATCH --mem=60gb                # 100gb for InterHand26M, memory per CORE; total memory is 1 TB (1,000,000 MB), 
 #SBATCH --export=ALL 
 #SBATCH --time=4-24:00:00                   # set to 24hr; please choose carefully
 #SBATCH --cpus-per-task=4  # Number of CPU cores per task

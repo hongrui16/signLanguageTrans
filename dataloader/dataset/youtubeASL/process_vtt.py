@@ -44,10 +44,29 @@ def process_vtt_files(video_dir, input_folder, output_file):
             # break
 
 
-video_dir = "/scratch/rhong5/dataset/youtube_ASL"  # 替换为视频文件所在的文件夹路径
-input_folder = "/scratch/rhong5/dataset/youtube_ASL"  # 替换为 .vtt 文件所在的文件夹路径
-output_file = "/scratch/rhong5/dataset/youtubeASL_annotation.txt"  # 输出文件路径
-if os.path.exists(output_file):
-    os.remove(output_file)
-process_vtt_files(video_dir, input_folder, output_file)
-print("处理完成，结果已保存到", output_file)
+def main_1():
+    video_dir = "/scratch/rhong5/dataset/youtube_ASL"  # 替换为视频文件所在的文件夹路径
+    input_folder = "/scratch/rhong5/dataset/youtube_ASL"  # 替换为 .vtt 文件所在的文件夹路径
+    output_file = "/scratch/rhong5/dataset/youtubeASL_annotation.txt"  # 输出文件路径
+    if os.path.exists(output_file):
+        os.remove(output_file)
+    process_vtt_files(video_dir, input_folder, output_file)
+    print("处理完成，结果已保存到", output_file)
+
+
+def main_2():
+    ## read youtubeASL_annotation.txt and count the number of lines
+    output_file = "/scratch/rhong5/dataset/youtubeASL_annotation.txt"  # 输出文件路径
+
+    video_names = set()
+    with open(output_file, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+        for line in lines:
+            video_name = line.split("||")[0]
+            video_names.add(video_name)
+    print(f"共有 {len(video_names)} 个视频文件")
+
+
+if __name__ == "__main__":
+    # main_1()
+    main_2()

@@ -10,8 +10,8 @@ import webvtt
 import sys
 
 if __name__ == '__main__':
-    parent_die = os.path.join(os.path.dirname(__file__), '../../..')
-    sys.path.append(parent_die)
+    parent_dir = os.path.join(os.path.dirname(__file__), '../../..')
+    sys.path.append(parent_dir)
     
 
 from utils.mediapipe_kpts_mapping import MediapipeKptsMapping
@@ -32,7 +32,7 @@ class YouTubeASLPieces(Dataset):
         self.num_frames_per_clip = num_frames_per_clip
         self.target_img_size = target_img_size
         self.debug = debug
-        self.keypoints_threshold = 0.1
+        self.keypoints_threshold = 0.3
         self.anno_file = '/scratch/rhong5/dataset/youtubeASL_annotation.txt'
 
         self.anno_data = self.parse_annotation(self.anno_file)
@@ -471,7 +471,7 @@ class YouTubeASLPieces(Dataset):
             return None, None, None, None, None
 
         # Uniformly sample N + 10 frames initially
-        initial_num_frames = self.num_frames_per_clip + 20 if self.num_frames_per_clip + 20 < total_clip_frames else total_clip_frames
+        initial_num_frames = self.num_frames_per_clip + 15 if self.num_frames_per_clip + 15 < total_clip_frames else total_clip_frames
         frame_indices = np.linspace(start_frame, end_frame - drop_last, initial_num_frames, dtype=int)
         # print('frame_indices:', frame_indices)
         # frames = []
@@ -495,6 +495,7 @@ class YouTubeASLPieces(Dataset):
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 results_pose = self.mp_pose.process(frame_rgb)
                 h, w, _ = frame.shape
+                # print(f'h x w: {h} x {w}')
                 if results_pose.pose_landmarks:
                     for idx, landmark in enumerate(results_pose.pose_landmarks.landmark):
                         all_kpts.append((int(w*landmark.x), int(h*landmark.y)))
@@ -504,6 +505,9 @@ class YouTubeASLPieces(Dataset):
                 all_kpts = np.array(all_kpts)
                 body_xmin, body_ymin = np.min(all_kpts, axis=0)
                 body_xmax, body_ymax = np.max(all_kpts, axis=0)
+                # cv2.imwrite('temp.jpg', frame)
+                # print(f'1 body_xmin: {body_xmin}, body_ymin: {body_ymin}, body_xmax: {body_xmax}, body_ymax: {body_ymax}')
+
                 body_w = body_xmax - body_xmin
                 body_h = body_ymax - body_ymin
                 body_xmin = max(0, body_xmin - body_w//2)
@@ -511,7 +515,11 @@ class YouTubeASLPieces(Dataset):
                 body_xmax = min(w, body_xmax + body_w//2)
                 body_ymax = min(h, body_ymax + body_h//3)
                 body_bbox = [body_xmin, body_ymin, body_xmax, body_ymax]
-                # print(f'xmin: {xmin}, ymin: {ymin}, xmax: {xmax}, ymax: {ymax
+                # print(f'2 body_xmin: {body_xmin}, body_ymin: {body_ymin}, body_xmax: {body_xmax}, body_ymax: {body_ymax}')
+                
+                body_w = body_xmax - body_xmin
+                body_h = body_ymax - body_ymin
+
                 if body_w * body_h < 0.01 * w * h:
                     continue
                 det_body_bbox = False
@@ -519,6 +527,8 @@ class YouTubeASLPieces(Dataset):
             ori_h, ori_w, _ = frame.shape
             left_hand_keypoints, right_hand_keypoints = [(-1.0, -1.0)]*len(self.hand_indices), [(-1.0, -1.0)]*len(self.hand_indices)
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # print('body_bbox:', body_bbox)
+            
             body_rgb = frame_rgb[body_ymin:body_ymax, body_xmin:body_xmax].copy()
 
             # Detect hands using MediaPipe
@@ -666,6 +676,9 @@ class YouTubeASLPieces(Dataset):
             end_time = self._time_to_seconds(end_time)
 
             video_path = os.path.join(self.video_dir, video_name)
+            if not os.path.exists(video_path):
+                print(f"Warning: video {video_name} {video_path} does not exist.")
+                continue
             
                 
             if text.endswith('.'):
@@ -749,26 +762,205 @@ class YouTubeASLPieces(Dataset):
             with open(json_filepath, 'w') as f:
                 json.dump(clip_info_dict, f, indent=4, ensure_ascii=False)
 
-        # import json
-        # json_filepath = os.path.join(self.video_dir, '/../youtubeASL_anno.json')
-        # # json_filepath = 'youtubeASL_anno.json'
-        # if os.path.exists(json_filepath):
-        #     os.remove(json_filepath)
-        # with open(json_filepath, 'w') as f:
-        #     json.dump(anno_json, f, indent=4, ensure_ascii=False)
-        #     # json.dump(anno_json, f)
-        # print("Dumped annotation data to JSON file.")
+    def uniform_sample(self, video_path: str, start_time: float, end_time: float, print_flag: bool = False) -> Optional[List[np.ndarray]]:
+        """
+        Sample frames from a video clip, filter out frames without hand keypoints, and resample.
+        
+        Args:
+            start_time (float): Start time in seconds.
+            end_time (float): End time in seconds.
+        
+        Returns:
+            List of sampled frames or None if sampling fails.
+        """
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            if print_flag:
+                print(f"Error opening video {video_path}")
+            return None, None
 
-# Example usage
-if __name__ == '__main__':
-    import argparse
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--start_idx', type=int, default=0, help='Start index of the dataset')
-    parser.add_argument('--end_idx', type=int, default=None, help='End index of the dataset')
-    args = parser.parse_args()
+        # print(f"Video: {video_path}, FPS: {fps}, Total frames: {total_frames}")
+        # print(f"Extracted segment: Start={start_time}, End={end_time}")
 
 
+        # Convert times to frame indices
+        start_frame = int(start_time * fps)
+        end_frame = int(end_time * fps)
+        if start_frame >= total_frames or end_frame > total_frames:
+            if print_flag:
+                print(f"Time range out of bounds for {video_path}")
+            cap.release()
+            return None, None
+
+        end_frame = min(end_frame, total_frames - 1)
+        total_clip_frames = end_frame - start_frame + 1
+
+        if total_clip_frames <= 0:
+            cap.release()
+            if print_flag:
+                print(f"Invalid frame range for {video_path}")
+            return None, None
+
+        # Uniformly sample N + 10 frames initially
+        frame_indices = np.linspace(start_frame, end_frame, self.num_frames_per_clip, dtype=int)
+
+        selected_frames = []
+        frame_index = []
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+        for m, fid in enumerate(frame_indices):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, fid)
+            ret, frame = cap.read()
+            if not ret:
+                print(f"Error reading frame {fid}")
+                continue
+
+            selected_frames.append(frame)
+            frame_index.append(fid)
+        cap.release()
+        return selected_frames, frame_index
+
+
+
+    def sample_draw_kpts(self, save_img_dir, start_idx = 0, end_idx = None):
+        """
+        Get a specific clip from the dataset.
+        
+        Args:
+            idx (int): Index of the clip.
+        
+        Returns:
+            Tuple of (frames_tensor, text, keypoints_dict) where:
+            - frames_tensor: Tensor of shape (N, 3, 224, 224)
+            - text: String caption for the clip
+            - keypoints_dict: Dict with 'hand', 'body', 'face' keys, each a list of (x, y, confidence)
+        """
+
+        # self.mp_hands = mp.solutions.hands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=self.keypoints_threshold)
+        # self.mp_pose = mp.solutions.pose.Pose(static_image_mode=False, min_detection_confidence=self.keypoints_threshold)
+        # self.mp_face_mesh = mp.solutions.face_mesh.FaceMesh(static_image_mode=False, min_detection_confidence=self.keypoints_threshold)
+        os.makedirs(save_img_dir, exist_ok=True)
+        # os.makedirs(save_json_dir, exist_ok=True)
+        # anno_json = {}
+        end_idx = len(self.anno_data) if end_idx is None else end_idx
+        available_cnt = 0
+        for idx in range(start_idx, end_idx):
+            clip_info_dict = {}
+            clip_id = f'{idx:08d}'
+
+            video_name, vtt_name, timestamp, text = self.anno_data[idx]
+            video_name_prefix = video_name.split('.')[0]
+
+            print(f"Processing clip {video_name} {idx}/{end_idx}")
+
+            start_time, end_time = timestamp.split(' --> ')
+            # print(f"Processing video {video_name}, text: {text}, start: {start_time}, end: {end_time}")
+
+            start_time = self._time_to_seconds(start_time)
+            end_time = self._time_to_seconds(end_time)
+
+            video_path = os.path.join(self.video_dir, video_name)
+            if not os.path.exists(video_path):
+                continue
+            
+                
+            if text.endswith('.'):
+                drop_last = 12
+            else:
+                drop_last = 3
+
+            
+            # Sample frames with hand filtering
+            filtered_frames, filtered_frames_index, filtered_left_hand_kpts_list, filtered_right_hand_kpts_list, body_bbox = self.fine_sample_frames_with_filter(video_path, start_time, end_time, drop_last, print_flag=False)
+            # print(f"Sampled frames: {len(filtered_frames)}, {filtered_frames_index}")
+        
+
+            if not filtered_frames is None and len(filtered_frames)> 0:
+                print(f"Filtered Detected {len(filtered_frames)} / {len(filtered_frames)} frames, in {video_path}")
+                body_xmin, body_ymin, body_xmax, body_ymax = body_bbox
+                # Process each frame for keypoints
+                for i, frame_rgb in enumerate(filtered_frames):
+                    frame_info_dict = {}
+                    frame_id = filtered_frames_index[i]
+                    formated_frame_id = f'{frame_id:08d}'
+                    frame_name = f'{video_name_prefix}_C{clip_id}_fid_{formated_frame_id}.jpg'
+                    
+                    ori_h, ori_w, _ = frame_rgb.shape
+                    body_rgb = frame_rgb[body_ymin:body_ymax, body_xmin:body_xmax].copy()
+                    _, body_kp, face_kp = self._detect_keypoints(body_rgb, frame_id, det_hand_kpts=False)
+                    body_kp = np.array(body_kp)
+                    face_kp = np.array(face_kp)
+
+                    invalid_body_kp = body_kp < 0
+                    invalid_face_kp = face_kp < 0
+
+                    body_kp[:, 0] = (body_kp[:, 0] * (body_xmax - body_xmin) + body_xmin)
+                    body_kp[:, 1] = (body_kp[:, 1] * (body_ymax - body_ymin) + body_ymin)
+                    
+                    face_kp[:, 0] = (face_kp[:, 0] * (body_xmax - body_xmin) + body_xmin) 
+                    face_kp[:, 1] = (face_kp[:, 1] * (body_ymax - body_ymin) + body_ymin)
+
+                    face_kp[invalid_face_kp] = -1
+                    body_kp[invalid_body_kp] = -1
+
+                    face_kp = face_kp.tolist()
+                    body_kp = body_kp.tolist()
+
+                    hand_kp = filtered_right_hand_kpts_list[i] + filtered_left_hand_kpts_list[i]
+
+                    for kp in hand_kp:
+                        if kp[0] > 0 and kp[1] > 0:
+                            cv2.circle(frame_rgb, (int(kp[0]*ori_w), int(kp[1]*ori_h)), 1, (0, 255, 0), -1)
+                    for kp in body_kp:
+                        if kp[0] > 0 and kp[1] > 0:
+                            cv2.circle(frame_rgb, (int(kp[0]), int(kp[1])), 1, (0, 255, 255), -1)
+                    
+                    for kp in face_kp:
+                        if kp[0] > 0 and kp[1] > 0:
+                            cv2.circle(frame_rgb, (int(kp[0]), int(kp[1])), 1, (0, 0, 255), -1)
+
+                    # print('len(face_kp):', len(face_kp))
+                    # print('hand_kp:', hand_kp)
+                    # print(f"    Saved frame {self.video_dir}/{frame_name}")
+                    # cv2.imwrite(f'output/{frame_name}', frame_rgb[:,:,::-1])
+
+                    # draw text on the image
+                    cv2.putText(frame_rgb, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    cv2.imwrite(f'{save_img_dir}/filtered_{frame_name}', frame_rgb[:,:,::-1])
+
+            else:
+                print(f"Filtered Sample Error: No frames sampled from {video_path}")
+                continue
+                    
+
+            ## uniform sample from origin video_path and draw keypoints
+            selected_frames, frame_index = self.uniform_sample(video_path, start_time, end_time, print_flag=False)
+            if not selected_frames is None and len(selected_frames) > 0:
+                print(f"Uniform Detected {len(filtered_frames)} / {len(filtered_frames)} frames, in {video_path}")
+                for i, frame_bgr in enumerate(selected_frames):
+                    frame_id = frame_index[i]
+                    formated_frame_id = f'{frame_id:08d}'
+                    frame_name = f'{video_name_prefix}_C{clip_id}_fid_{formated_frame_id}.jpg'
+
+                    # draw text on the image
+                    cv2.putText(frame_bgr, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+                    cv2.imwrite(f'{save_img_dir}/uniform_{frame_name}', frame_bgr)
+                    # print(f"    Saved frame {self.video_dir}/{frame_name}")
+                    #            
+            else:
+                print(f"Uniform Sample Error: No frames sampled from {video_path}")
+                
+            available_cnt += 1
+            if available_cnt > 5:
+                break
+            print()
+
+        
+                
+def main_dump_anno_json(args):
     dataset = YouTubeASLPieces()
     print(f"Total clips in dataset: {len(dataset)}")
     
@@ -826,48 +1018,27 @@ if __name__ == '__main__':
     save_img_dir = '/scratch/rhong5/dataset/youtubeASL_frames'
     save_anno_dir = '/scratch/rhong5/dataset/youtubeASL_anno'
 
+    
+#     save_img_dir = '/projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_frames'
+#     save_anno_dir = '/projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_anno'
+
+
     dataset.dump_anno(save_img_dir, save_anno_dir, start_idx=args.start_idx, end_idx=args.end_idx)
     print("Dumped annotation data to JSON file.")
+            
+def main_sample_examples():
+    dataset = YouTubeASLPieces(num_frames_per_clip = 15)
+    dataset.sample_draw_kpts(save_img_dir = 'output2')
 
-    # ## load json file
-    # import json
-    # with open('youtubeASL_anno.json', 'r') as f:
-    #     anno_data = json.load(f)
+# Example usage
+if __name__ == '__main__':
+    import argparse
 
-    # for clip_id in anno_data:
-    #     clip_info = anno_data[clip_id]
-    #     # print(f"Clip ID: {clip_id}")
-    #     # print(f"Video name: {clip_info['video_name']}")
-    #     # print(f"Text: {clip_info['text']}")
-    #     # print(f"Start time: {clip_info['start_time']}, End time: {clip_info['end_time']}")
-    #     # print(f"Number of keyframes: {len(clip_info['keyframes'])}")
-    #     # print(f"Keyframes: {clip_info['keyframes']}")
-        
-    #     #draw keypoints on image
-    #     for frame_name in clip_info['keyframes']:
-    #         frame_info = clip_info['keyframes'][frame_name]
-    #         hand_kps = frame_info['hand']
-    #         body_kps = frame_info['body']
-    #         face_kps = frame_info['face']
-    #         image = cv2.imread(f'output/{frame_name}')
-    #         h, w = image.shape[:2]
-    #         for (x, y) in hand_kps:  
-    #             if x > 0 and y > 0:
-    #                 cv2.circle(image, (int(w*x), int(h*y)), 1, (0, 255, 0), -1)
-
-    #         for (x, y) in body_kps:
-    #             if x > 0 and y > 0:
-    #                 cv2.circle(image, (int(w*x), int(h*y)), 1, (0, 255, 255), -1)
-                        
-    #         for (x, y) in face_kps:
-    #             if x > 0 and y > 0:
-    #                 cv2.circle(image, (int(w*x), int(h*y)), 1, (0, 0, 255), -1)
-
-    #         cv2.imwrite(f'output/example_{frame_name}', image)
-    #         print(f"Saved example_{frame_name}")
-    #         break
-    #     break
-    
-    # draw keypoints on image
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--start_idx', type=int, default=0, help='Start index of the dataset')
+    parser.add_argument('--end_idx', type=int, default=None, help='End index of the dataset')
+    args = parser.parse_args()
+    # main_sample_examples()
+    main_dump_anno_json(args)
 
 # Example output:

@@ -74,6 +74,8 @@ from dataloader.dataset.youtubeASL.youtubeASLClip import YouTubeASLClip
 from dataloader.dataset.youtubeASL.youtubeASLPieces import YouTubeASLPieces
 from transformers import MBartTokenizer, MBartForConditionalGeneration
 
+from utils.mediapipe_kpts_mapping import MediapipeKptsMapping
+
 
 class UniSignTrans():
     def __init__(self, args):
@@ -135,8 +137,10 @@ class UniSignTrans():
         self.logger.info(f'logging_dir: {self.log_dir}', main_process_only=True)
         self.logger.info(f'output_ckpts_dir: {self.ckpt_dir}\n', main_process_only=True)
 
-        self.epochs = 45
-        self.logger.info(f"Training epochs: {self.epochs}", main_process_only=True)
+        self.start_epoch = 0
+        self.best_loss = float('inf')
+        self.max_epochs = 45
+        self.logger.info(f"Training epochs: {self.max_epochs}", main_process_only=True)
         
         # use_condition = False        
         
@@ -151,7 +155,7 @@ class UniSignTrans():
         dataset_name = 'youtubeASL'
         self.logger.info(f"Dataset name: {dataset_name}", main_process_only=True)
 
-        self.train_batch_size = 5
+        self.train_batch_size = 65
         if self.debug:
             self.train_batch_size = 5
         
@@ -170,11 +174,23 @@ class UniSignTrans():
             encoder_output_size = 0
             self.feature_encoder = None
 
+        
+        
+        self.hand_mapping = MediapipeKptsMapping.hand_keypoints_mapping
+        self.face_mapping = MediapipeKptsMapping.face_keypoints_mapping
+        self.body_mapping = MediapipeKptsMapping.body_keypoints_mapping
+
+        # Define keypoint indices mapping to MediaPipe landmarks
+        self.hand_indices = [value for key, value in self.hand_mapping.items()]  # Map to MediaPipe hand landmarks (0–20)
+        self.body_indices = [value for key, value in self.body_mapping.items()]  # Map to MediaPipe body landmarks (0–8)
+        self.face_indices = [value for key, value in self.face_mapping.items()]
+        
+
         num_keypoints = {}
-        num_keypoints["lh"] = 21
-        num_keypoints["rh"] = 21
-        num_keypoints["body"] = 9
-        num_keypoints["face"] = 18
+        num_keypoints["lh"] = len(self.hand_indices)  # 21
+        num_keypoints["rh"] = len(self.hand_indices)  # 21
+        num_keypoints["body"] = len(self.body_indices)  # 
+        num_keypoints["face"] = len(self.face_indices)  # 
 
         self.tokenizer = MBartTokenizer.from_pretrained("facebook/mbart-large-50", src_lang="en_XX", tgt_lang="en_XX")
         self.logger.info("Tokenizer loaded.", main_process_only=True)
@@ -186,16 +202,19 @@ class UniSignTrans():
         self.UniSignModel = UniSignNetwork(hidden_dim=256, LLM_name="facebook/mbart-large-50", device = self.device, tokenizer = self.tokenizer)
         self.UniSignModel.float()
 
+        
+        self.UniSignModel.to(self.device)
+
         # UniSignModel 的优化器
         self.optimizer_UniSignModel = torch.optim.Adam(self.UniSignModel.parameters(), lr=1e-4)
 
-        
+
         if self.resume_path is not None:
             self.load_ckpt(self.resume_path)
             self.logger.info(f"Resuming from checkpoint: {self.resume_path}", main_process_only=True)
         
 
-        self.UniSignModel.to(self.device)
+
         
         if self.use_feature_encoder:
             self.feature_encoder.to(self.device)
@@ -209,7 +228,7 @@ class UniSignTrans():
 
         data_dir = '/scratch/rhong5/dataset/youtube_ASL/'
         # train_dataset = YouTubeASL(data_dir, debug = self.debug)
-        train_dataset = YouTubeASLPieces(data_dir, debug = self.debug) 
+        train_dataset = YouTubeASLClip(clip_frame_dir = '/scratch/rhong5/dataset/youtubeASL_frames', clip_anno_dir = '/scratch/rhong5/dataset/youtubeASL_anno', debug = self.debug)
 
         self.logger.info(f"Train dataset dir: {data_dir}; sample num: {len(train_dataset)}", main_process_only=True)
         
@@ -249,7 +268,7 @@ class UniSignTrans():
         progress_bar = tqdm(
             iterable=dataloader,
             total=total_steps,
-            desc=f"{mode} Epoch {epoch + 1}/{self.epochs}",
+            desc=f"{mode} Epoch {epoch + 1}/{self.max_epochs}",
         )
 
         torch.autograd.set_detect_anomaly(True)
@@ -369,11 +388,10 @@ class UniSignTrans():
         val_loss_history = []
 
         
-        self.best_loss = float('inf')
         loss_curve_filepath = f'{self.log_dir}/training_loss_{self.name_prefix}.jpg'
 
         self.logger.info("Start training...", main_process_only=True)
-        for epoch in range(self.epochs):
+        for epoch in range(self.start_epoch, self.max_epochs):
             train_loss = self.training(self.train_loader, epoch, 'train')
             train_loss_history.append(train_loss)
 
@@ -446,6 +464,8 @@ class UniSignTrans():
             'optimizer_uniSign': self.optimizer_UniSignModel.state_dict(),
             'optimizer_encoder': self.optimizer_encoder.state_dict() if self.use_feature_encoder else None,
             'epoch': epoch,
+            'best_loss': self.best_loss,
+            # 'best_epoch': epoch,
         }
 
         # save the model
@@ -459,7 +479,15 @@ class UniSignTrans():
         if self.use_feature_encoder:
             self.feature_encoder.load_state_dict(model_dict['encoder'], strict=False)
             self.optimizer_encoder.load_state_dict(model_dict['optimizer_encoder'])
-        self.best_epoch = model_dict['epoch']
+
+        self.start_epoch = model_dict['epoch']
+        self.logger.info(f"Start epoch: {self.start_epoch}", main_process_only=True)
+        if 'best_loss' in model_dict:
+            self.best_loss = model_dict['best_loss']
+            self.logger.info(f"Best loss: {self.best_loss}", main_process_only=True)
+        else:
+            self.best_loss = float('inf')
+
         self.logger.info(f'Loading model from: {ckpt_path}', main_process_only=True)
 
 if __name__ == '__main__':
@@ -471,7 +499,7 @@ if __name__ == '__main__':
     args.add_argument('--model_name', type=str, default='UniSign', help='Model name')
     args = args.parse_args()
 
-
+    args.resume = '/scratch/rhong5/weights/temp_training_weights/singLangTran/20250401-111049_ID-3383124_youtubeASL_UniSign_best.pth'
     # test_forward()
     # test_vec_diffusion()
     # interhand_diffusion_on_mano_para(args)

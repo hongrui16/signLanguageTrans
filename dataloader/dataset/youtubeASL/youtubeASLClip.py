@@ -5,11 +5,19 @@ import numpy as np
 import mediapipe as mp
 from typing import List, Tuple, Optional
 from torch.utils.data import Dataset
-# import webvtt
+import json
+import heapq
+import sys
 
+if __name__ == '__main__':
+    parent_dir = os.path.join(os.path.dirname(__file__), '../../..')
+    sys.path.append(parent_dir)
+    
+
+from utils.mediapipe_kpts_mapping import MediapipeKptsMapping
 
 class YouTubeASLClip(Dataset):
-    def __init__(self, clip_dir: str, num_frames_per_clip: int = 16):
+    def __init__(self, clip_frame_dir: str, clip_anno_dir: str, num_frames_per_clip: int = 15, **kwargs):
         """
         Initialize the YouTube ASL dataset loader for pre-cropped clips.
         
@@ -18,162 +26,77 @@ class YouTubeASLClip(Dataset):
             num_frames_per_clip (int): Number of frames to sample per clip (default: 16).
             frame_sample_rate (int): Frames per second to sample from the video (default: 30 FPS).
         """
-        self.clip_dir = clip_dir
+        self.clip_frame_dir = clip_frame_dir
+        self.clip_anno_dir = clip_anno_dir
         self.num_frames_per_clip = num_frames_per_clip
-        self.clips = self._find_clips()
+        self.debug = kwargs.get('debug', False)
+        self.logger = kwargs.get('logger', None)
         
-        # Initialize MediaPipe solutions
-        self.mp_hands = mp.solutions.hands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=0.5)
-        self.mp_pose = mp.solutions.pose.Pose(static_image_mode=False, min_detection_confidence=0.5)
-        self.mp_face_mesh = mp.solutions.face_mesh.FaceMesh(static_image_mode=False, min_detection_confidence=0.5)
+        self.load_frame = kwargs.get('load_frame', False)
         
-        # Load adjacency matrices (assuming they’re saved as .pth files or defined)
-        # Define keypoint indices mapping to MediaPipe landmarks
-        self.hand_indices = list(range(21))  # 0–20 (matches MediaPipe hand landmarks directly)
-        self.body_indices = [15, 13, 11, 16, 14, 12, 7, 8, 0]  # Map to MediaPipe pose landmarks (0–8)
-        self.face_indices = [234, 454, 205, 425, 152, 4, 61, 291, 13, 37, 41, 14, 17, 55, 59, 18, 0, 17]  # Map to MediaPipe face mesh landmarks (0–17)
+        self.frame_size = kwargs.get('frame_size', (224, 224))
 
-    def _find_clips(self) -> List[Tuple[str, str]]:
+        
+        self.hand_mapping = MediapipeKptsMapping.hand_keypoints_mapping
+        self.face_mapping = MediapipeKptsMapping.face_keypoints_mapping
+        self.body_mapping = MediapipeKptsMapping.body_keypoints_mapping
+
+        # Define keypoint indices mapping to MediaPipe landmarks
+        self.hand_indices = [value for key, value in self.hand_mapping.items()]  # Map to MediaPipe hand landmarks (0–20)
+        self.body_indices = [value for key, value in self.body_mapping.items()]  # Map to MediaPipe body landmarks (0–8)
+        self.face_indices = [value for key, value in self.face_mapping.items()]
+        
+        # self.annos_info = self._find_load_clips_annos()
+        self.annos_files = self._find_clips_annos()
+        
+        if self.debug:
+            max_num_clips = 1000 if 1000 < len(self.annos_files) else len(self.annos_files)
+            self.annos_files = self.annos_files[:max_num_clips]
+
+        if not self.logger is None:
+            self.logger.info(f"Total clips: {len(self.annos_files)}")
+        else:
+            print(f"Total clips: {len(self.annos_files)}")
+
+    def _find_load_clips_annos(self) -> List[Tuple[str, str]]:
         """
-        Find matching clip (.mp4) and transcript (.txt) files in the directory.
+        Find matching clip anno (.json) 
         
         Returns:
-            List of tuples (clip_path, txt_path) with matching prefixes (e.g., 'clip_0.mp4', 'clip_0.txt').
+            List of tuples json file paths
         """
-        clip_files = sorted([f for f in os.listdir(self.clip_dir) if f.endswith('.mp4')])
-        clip_transcript_pairs = []
+        clip_files = sorted([f for f in os.listdir(self.clip_anno_dir) if f.endswith('.json')])
+        clip_annos = []
         
         for clip_file in clip_files:
-            base_name = clip_file.replace('.mp4', '')
-            txt_file = f"{base_name}.txt"
-            txt_path = os.path.join(self.clip_dir, txt_file)
-            if os.path.exists(txt_path):
-                clip_path = os.path.join(self.clip_dir, clip_file)
-                clip_transcript_pairs.append((clip_path, txt_path))
-        
-        return clip_transcript_pairs
+            clip_path = os.path.join(self.clip_anno_dir, clip_file)
+            with open(clip_path, 'r', encoding='utf-8') as f:
+                clip_anno = json.load(f)
+                clip_annos.append(clip_anno)
+        return clip_annos
 
-    def _read_text(self, txt_path: str) -> str:
+    def _find_clips_annos(self) -> List[Tuple[str, str]]:
         """
-        Read the transcript text from a .txt file.
-        
-        Args:
-            txt_path (str): Path to the transcript .txt file.
+        Find matching clip anno (.json) 
         
         Returns:
-            String of the transcript text.
+            List of tuples json file paths
         """
-        try:
-            with open(txt_path, 'r', encoding='utf-8') as f:
-                return f.read().strip()
-        except Exception as e:
-            print(f"Error reading TXT file {txt_path}: {e}")
-            return ""
-
-    def _sample_frames_with_hand_filter(self, clip_path: str, num_frames: int) -> Optional[List[np.ndarray]]:
-        """
-        Sample frames from a clip, filter out frames without hand keypoints, and resample.
+        clip_files = sorted([f for f in os.listdir(self.clip_anno_dir) if f.endswith('.json')])
+        return clip_files
+        # clip_annos = []
         
-        Args:
-            clip_path (str): Path to the clip video file.
-            num_frames (int): Target number of frames to sample.
-        
-        Returns:
-            List of sampled frames or None if sampling fails.
-        """
-        cap = cv2.VideoCapture(clip_path)
-        if not cap.isOpened():
-            print(f"Error opening video {clip_path}")
-            return None
+        # for clip_file in clip_files:
+        #     clip_path = os.path.join(self.clip_anno_dir, clip_file)
+        #     with open(clip_path, 'r', encoding='utf-8') as f:
+        #         clip_anno = json.load(f)
+        #         clip_annos.append(clip_anno)
+        # return clip_annos
 
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-        if total_frames <= 0:
-            cap.release()
-            return None
-
-        # Uniformly sample N + 10 frames initially
-        initial_num_frames = num_frames + 10
-        frame_indices = np.linspace(0, total_frames - 1, initial_num_frames, dtype=int)
-        frames = []
-        hand_detected_frames = []
-
-        for idx in frame_indices:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-            ret, frame = cap.read()
-            if ret:
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                # Detect hands using MediaPipe
-                results = self.mp_hands.process(frame_rgb)
-                if results.multi_hand_landmarks:
-                    hand_detected_frames.append(frame_rgb)
-                frames.append(frame_rgb)
-            else:
-                break
-
-        cap.release()
-        if not hand_detected_frames:
-            return None
-
-        # Uniformly sample num_frames from hand-detected frames
-        if len(hand_detected_frames) <= num_frames:
-            sampled_frames = hand_detected_frames
-        else:
-            sample_indices = np.linspace(0, len(hand_detected_frames) - 1, num_frames, dtype=int)
-            sampled_frames = [hand_detected_frames[i] for i in sample_indices]
-
-        return sampled_frames
-
-    def _detect_keypoints(self, frame: np.ndarray) -> Tuple[Optional[List], Optional[List], Optional[List]]:
-        """
-        Detect hand, body, and face keypoints using MediaPipe.
-        
-        Args:
-            frame (np.ndarray): RGB frame of shape (height, width, 3).
-        
-        Returns:
-            Tuples of (hand_keypoints, body_keypoints, face_keypoints), each as lists of (x, y, confidence).
-        """
-        hand_keypoints, body_keypoints, face_keypoints = None, None, None
-
-        # Detect hands
-        results_hands = self.mp_hands.process(frame)
-        if results_hands.multi_hand_landmarks:
-            hand_keypoints = []
-            for hand_landmarks in results_hands.multi_hand_landmarks:
-                for idx, landmark in enumerate(hand_landmarks.landmark):
-                    if idx in self.hand_indices:  # Use only specified hand indices (0–20)
-                        x, y = landmark.x * frame.shape[1], landmark.y * frame.shape[0]
-                        confidence = landmark.visibility if hasattr(landmark, 'visibility') else 1.0
-                        hand_keypoints.append((x, y, confidence))
-
-        # Detect body (pose)
-        results_pose = self.mp_pose.process(frame)
-        if results_pose.pose_landmarks:
-            body_keypoints = []
-            for idx, landmark in enumerate(results_pose.pose_landmarks.landmark):
-                if idx in self.body_indices:  # Use only specified body indices (0–8)
-                    x, y = landmark.x * frame.shape[1], landmark.y * frame.shape[0]
-                    confidence = landmark.visibility
-                    body_keypoints.append((x, y, confidence))
-
-        # Detect face
-        results_face = self.mp_face_mesh.process(frame)
-        if results_face.multi_face_landmarks:
-            face_keypoints = []
-            for face_landmarks in results_face.multi_face_landmarks:
-                for idx, landmark in enumerate(face_landmarks.landmark):
-                    if idx in self.face_indices:  # Use adjacency matrix for face
-                        x, y = landmark.x * frame.shape[1], landmark.y * frame.shape[0]
-                        confidence = landmark.visibility if hasattr(landmark, 'visibility') else 1.0
-                        face_keypoints.append((x, y, confidence))
-
-        return hand_keypoints, body_keypoints, face_keypoints
 
     def __len__(self) -> int:
         """Return the total number of clips in the dataset."""
-        return len(self.clips)
+        return len(self.annos_files)
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, str, dict]:
         """
@@ -188,29 +111,80 @@ class YouTubeASLClip(Dataset):
             - text: String caption for the clip
             - keypoints_dict: Dict with 'hand', 'body', 'face' keys, each a list of (x, y, confidence)
         """
-        clip_path, txt_path = self.clips[idx]
+        clip_file = self.annos_files[idx]
+        clip_path = os.path.join(self.clip_anno_dir, clip_file)
+        with open(clip_path, 'r', encoding='utf-8') as f:
+            clip_anno_info = json.load(f)
+
         
         # Read text
-        text = self._read_text(txt_path)
-        if not text:
-            return None  # Skip invalid clips
+        text = clip_anno_info['text']
+        
+        keyframes_dict = clip_anno_info['keyframes']
+        
+        frame_names = list(keyframes_dict.keys())
 
-        # Sample frames with hand filtering
-        sampled_frames = self._sample_frames_with_hand_filter(clip_path, self.num_frames_per_clip)
-        if sampled_frames is None or len(sampled_frames) == 0:
-            return None  # Skip invalid clips
+        if self.load_frame:
+            frame_names = [f for f in frame_names if os.path.exists(os.path.join(self.clip_frame_dir, f))]
 
-        # Process each frame for keypoints
+            
+
+        if len(frame_names) > self.num_frames_per_clip:
+            frame_ids_offest = []
+            start = 0
+            for frame_name in frame_names:
+                frame_id = frame_name.split('_')[-1].split('.')[0]
+                int_frame_id = int(frame_id)
+                frame_ids_offest.append(int_frame_id - start)
+                start = int_frame_id            
+            top_n_indices = heapq.nlargest(self.num_frames_per_clip, range(len(frame_ids_offest)), key=lambda i: frame_ids_offest[i])
+            frame_names = [frame_names[i] for i in top_n_indices]
+
+        all_frames = []
         hand_keypoints_all, body_keypoints_all, face_keypoints_all = [], [], []
-        for frame in sampled_frames:
-            hand_kp, body_kp, face_kp = self._detect_keypoints(frame)
-            hand_keypoints_all.append(hand_kp if hand_kp else [])
-            body_keypoints_all.append(body_kp if body_kp else [])
-            face_keypoints_all.append(face_kp if face_kp else [])
+        for frame_name in frame_names:
+            if self.load_frame:
+                frame_path = os.path.join(self.clip_frame_dir, frame_name)
+                frame_bgr = cv2.imread(frame_path)
+                frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+                frame_rgb = cv2.resize(frame_rgb, self.frame_size)
+                all_frames.append(frame_rgb)
+
+            frame_keypoints = keyframes_dict[frame_name]
+            hand_keypoints = frame_keypoints['hand']
+            body_keypoints = frame_keypoints['body']
+            face_keypoints = frame_keypoints['face']
+            hand_keypoints_all.append(hand_keypoints)
+            body_keypoints_all.append(body_keypoints)
+            face_keypoints_all.append(face_keypoints)
+            
+        
+        body_keypoints_all = np.array(body_keypoints_all, dtype=np.float32)
+        hand_keypoints_all = np.array(hand_keypoints_all, dtype=np.float32)
+        face_keypoints_all = np.array(face_keypoints_all, dtype=np.float32)
+
+
+        if len(frame_names) < self.num_frames_per_clip:
+            body_keypoints_all = np.concatenate((body_keypoints_all, np.zeros((self.num_frames_per_clip - len(body_keypoints_all), len(self.body_indices), 2), dtype=np.float32) - 1), axis=0)
+            hand_keypoints_all = np.concatenate((hand_keypoints_all, np.zeros((self.num_frames_per_clip - len(hand_keypoints_all), 2*len(self.hand_indices), 2), dtype=np.float32) - 1), axis=0)
+            face_keypoints_all = np.concatenate((face_keypoints_all, np.zeros((self.num_frames_per_clip - len(face_keypoints_all), len(self.face_indices), 2), dtype=np.float32) - 1), axis=0)
+
 
         # Stack frames into a tensor
-        frames = [cv2.resize(frame, (224, 224)) for frame in sampled_frames]
-        frames_tensor = torch.from_numpy(np.stack(frames, axis=0)).float().permute(0, 3, 1, 2) / 255.0  # (N, 3, 224, 224)
+        if self.load_frame:
+            all_frames = np.array(all_frames, dtype=np.uint8)
+            if all_frames.shape[0] < self.num_frames_per_clip:                    
+                pad_frames = np.zeros((self.num_frames_per_clip - len(all_frames), self.frame_size[0], self.frame_size[1], 3), dtype=np.uint8)
+                all_frames = np.concatenate((all_frames, pad_frames), axis=0)
+            frames_tensor = torch.from_numpy(all_frames).float().permute(0, 3, 1, 2) / 255.0  # (N, 3, 224, 224)
+        else:
+            frames_tensor = 0
+            
+        # to tensor
+        body_keypoints_all = torch.from_numpy(body_keypoints_all).float()
+        hand_keypoints_all = torch.from_numpy(hand_keypoints_all).float()
+        face_keypoints_all = torch.from_numpy(face_keypoints_all).float()
+
 
         # Create keypoints dictionary
         keypoints_dict = {
@@ -222,18 +196,46 @@ class YouTubeASLClip(Dataset):
         return (frames_tensor, text, keypoints_dict)
 
 
-# Example usage
-def main_YouTubeASLClip():
-    clip_dir = "path/to/your/clips"  # Replace with your directory path
-    dataset = YouTubeASLClip(clip_dir, num_frames_per_clip=16, frame_sample_rate=30)
-    print(f"Total clips in dataset: {len(dataset)}")
+if __name__ == '__main__':
+
+    clip_anno_dir = '/scratch/rhong5/dataset/youtubeASL_anno'
+    clip_frame_dir = '/scratch/rhong5/dataset/youtubeASL_frames'
+
+
+    dataset = YouTubeASLClip(clip_frame_dir, clip_anno_dir, load_frame=True)
+  
     
-    # Example: Get the first item
-    item = dataset[0]
-    if item:
-        frames, text, keypoints = item
-        print(f"Text: {text}")
-        print(f"Frames shape: {frames.shape}")
-        print(f"Hand keypoints (first frame): {keypoints['hand'][0][:5] if keypoints['hand'][0] else 'None'}")
-        print(f"Body keypoints (first frame): {keypoints['body'][0][:5] if keypoints['body'][0] else 'None'}")
-        print(f"Face keypoints (first frame): {keypoints['face'][0][:5] if keypoints['face'][0] else 'None'}")
+    # get one sample and draw keypoints on the image
+
+    id = np.random.randint(0, len(dataset)-1)
+    frames_tensor, text, keypoints_dict = dataset[id]
+
+    print(f"Text: {text}")
+    print(f"Frames tensor shape: {frames_tensor.shape}")
+    # print(f"Keypoints dict: {keypoints_dict}")
+    print(f"Hand keypoints shape: {keypoints_dict['hand'].shape}")
+    print(f"Body keypoints shape: {keypoints_dict['body'].shape}")
+    print(f"Face keypoints shape: {keypoints_dict['face'].shape}")
+    # Draw keypoints on the first frame
+    frame = frames_tensor[0].permute(1, 2, 0).numpy() * 255
+    frame = frame.astype(np.uint8)
+
+    h, w, _ = frame.shape
+    # Draw keypoints
+    hand_keypoints = keypoints_dict['hand'][0].numpy()
+    body_keypoints = keypoints_dict['body'][0].numpy()
+    face_keypoints = keypoints_dict['face'][0].numpy()
+    for i in range(len(hand_keypoints)):
+        x, y = hand_keypoints[i]
+        if x != -1 and y != -1:
+            cv2.circle(frame, (int(x*w), int(y*h)), 1, (0, 255, 0), -1)
+    for i in range(len(body_keypoints)):
+        x, y = body_keypoints[i]
+        if x != -1 and y != -1:
+            cv2.circle(frame, (int(x*w), int(y*h)), 1, (255, 0, 0), -1)
+    for i in range(len(face_keypoints)):
+        x, y = face_keypoints[i]
+        if x != -1 and y != -1:
+            cv2.circle(frame, (int(x*w), int(y*h)), 1, (0, 0, 255), -1)
+
+    cv2.imwrite('keypoints.jpg', frame[:,:,::-1])
