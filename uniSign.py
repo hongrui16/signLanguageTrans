@@ -27,6 +27,8 @@ import time
 import cv2
 import shutil
 import logging
+from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
+
 
 # # 3️⃣ 释放 GPU 显存，防止 OOM
 # torch.cuda.empty_cache()
@@ -64,17 +66,16 @@ from torch.optim.lr_scheduler import StepLR
 
 # import list and tube
 from typing import List, Tuple
+from transformers.modeling_outputs import BaseModelOutput
 
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 
 from network.uni_sign_network import UniSignNetwork
 from network.feature_encoder import get_encoder
-from dataloader.dataset.youtubeASL.youtubeASL import YouTubeASL
-from dataloader.dataset.youtubeASL.youtubeASLClip import YouTubeASLClip
-from dataloader.dataset.youtubeASL.youtubeASLPieces import YouTubeASLPieces
 from transformers import MBartTokenizer, MBartForConditionalGeneration
-
+from dataloader.dataloader import get_dataloader
 from utils.mediapipe_kpts_mapping import MediapipeKptsMapping
+from config.config import arg_settings
 
 
 class UniSignTrans():
@@ -83,14 +84,26 @@ class UniSignTrans():
         self.debug = args.debug
         self.model_name = args.model_name
         self.resume_path = args.resume
+        self.dataset_name = args.dataset_name
+        self.feature_encoder_name = args.feature_encoder
+        self.modality = args.modality
+        self.finetune = args.finetune
+        self.n_frames = args.n_frames
+        self.batch_size = args.batch_size
 
         time_stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         slurm_job_id = os.environ.get('SLURM_JOB_ID') if os.environ.get('SLURM_JOB_ID') is not None else '0'
-        log_dir = f'Zlog/{time_stamp}_ID-{slurm_job_id}'
+
+        self.weight_name_prefix = f'{time_stamp}_JID-{slurm_job_id}_{self.model_name}_{self.dataset_name}_{self.modality}'
+
+        log_dir = f'Zlog/{time_stamp}_JID-{slurm_job_id}'
         self.log_dir = log_dir  
 
         os.makedirs(log_dir, exist_ok=True)
-        shutil.copy(__file__, log_dir)
+        shutil.copy(__file__, os.path.join(log_dir, f"{__file__.split('/')[-1].split('.')[0]}_{time_stamp}.py"))
+        config_filename = os.path.join(log_dir, f"config_{time_stamp}.py")
+        shutil.copy("config/config.py", config_filename)
+        # shutil.copy("config/config.py", os.path.join(self.log_dir, f"config_{slurm_job_id}.py"))
 
         self.ckpt_dir = '/scratch/rhong5/weights/temp_training_weights/singLangTran'
         os.makedirs(self.ckpt_dir, exist_ok=True)
@@ -144,31 +157,75 @@ class UniSignTrans():
         
         # use_condition = False        
         
-        self.feature_encoder_name = 'dino_v2'
-        self.feature_encoder_name = None
+
         self.logger.info(f"feature encoder: {self.feature_encoder_name}", main_process_only=True)
         
         self.use_feature_encoder = False
         self.logger.info(f"Use use_feature_encoder: {self.use_feature_encoder}", main_process_only=True)
 
-        # dataset_name = 'MNIST'
-        dataset_name = 'youtubeASL'
-        self.logger.info(f"Dataset name: {dataset_name}", main_process_only=True)
+        
+        
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.logger.info(f"Using device: {self.device}", main_process_only=True)
 
-        self.train_batch_size = 65
+        # dataset_name = 'MNIST'
+        self.logger.info(f"Dataset name: {self.dataset_name}", main_process_only=True)
+
+        self.train_batch_size = self.batch_size
         if self.debug:
             self.train_batch_size = 5
         
         self.logger.info(f"Train batch size: {self.train_batch_size}", main_process_only=True)
 
-        self.name_prefix = f'{time_stamp}_ID-{slurm_job_id}_{dataset_name}_{self.model_name}'
-        self.logger.info(f"Name prefix: {self.name_prefix}", main_process_only=True)
+        
+        self.logger.info("Dataloader configuration.", main_process_only=True)
+        # transform = transforms.Compose([
+        #     transforms.Resize((224, 224)),  # 调整大小到 224x224
+        #     transforms.ToTensor(),  # 转换为 Tensor，自动归一化到 [0,1]
+        #     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # 标准化
+        #     ])
+
+        train_loader, val_loader, test_loader, \
+        train_dataset,val_dataset, test_dataset, \
+        self.train_sampler, self.val_sampler, self.test_sampler = get_dataloader(
+            dataset_name=self.dataset_name,
+            logger=self.logger,
+            debug=self.debug,
+            train_batch_size=self.train_batch_size,
+            val_batch_size=self.train_batch_size,
+            test_batch_size=self.train_batch_size,
+            modality = self.modality,
+            n_frames = self.n_frames,
+        )
+        self.train_loader = train_loader
+        self.val_loader = val_loader
+        self.test_loader = test_loader
+        self.train_dataset = train_dataset
+        self.val_dataset = val_dataset
+        self.test_dataset = test_dataset
+        
+        self.logger.info(f"Train dataset size: {len(self.train_dataset)}", main_process_only=True)
+        self.logger.info(f"Val dataset size: {len(self.val_dataset)}", main_process_only=True)  
+        self.logger.info(f"Test dataset size: {len(self.test_dataset)}", main_process_only=True)
+        self.logger.info(f"Train batch size: {self.train_batch_size}", main_process_only=True)
+        self.logger.info(f"Val batch size: {self.train_batch_size}", main_process_only=True)
+        self.logger.info(f"Test batch size: {self.train_batch_size}", main_process_only=True)
+
+        
+        for batch in self.train_loader:
+            frames_tensor, text, keypoints_dict = batch
+            face_keypoints = keypoints_dict['face'].to(self.device).float()
+            body_keypoints = keypoints_dict['body'].to(self.device).float()
+            hand_keypoints = keypoints_dict['hand'][:, :, :21, :].to(self.device).float()
+            self.logger.info(f"hand_keypoints Shape: {hand_keypoints.shape}", main_process_only=True)  
+            self.logger.info(f"body_keypoints Shape: {body_keypoints.shape}", main_process_only=True)  
+            self.logger.info(f"face_keypoints Shape: {face_keypoints.shape}", main_process_only=True)  
+            if isinstance(frames_tensor, torch.Tensor):
+                self.logger.info(f"frames_tensor Shape: {frames_tensor.shape}", main_process_only=True)  
+            break
 
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.logger.info(f"Using device: {self.device}", main_process_only=True)
-
-        if self.feature_encoder_name:
+        if 'rgb' in self.modality.lower() and self.feature_encoder_name:
             self.feature_encoder, encoder_output_size = get_encoder(self.feature_encoder_name, self.device)
         else:
             encoder_output_size = 0
@@ -219,35 +276,6 @@ class UniSignTrans():
         if self.use_feature_encoder:
             self.feature_encoder.to(self.device)
 
-        self.logger.info("Dataloader configuration.", main_process_only=True)
-        # transform = transforms.Compose([
-        #     transforms.Resize((224, 224)),  # 调整大小到 224x224
-        #     transforms.ToTensor(),  # 转换为 Tensor，自动归一化到 [0,1]
-        #     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # 标准化
-        #     ])
-
-        data_dir = '/scratch/rhong5/dataset/youtube_ASL/'
-        # train_dataset = YouTubeASL(data_dir, debug = self.debug)
-        train_dataset = YouTubeASLClip(clip_frame_dir = '/scratch/rhong5/dataset/youtubeASL_frames', clip_anno_dir = '/scratch/rhong5/dataset/youtubeASL_anno', debug = self.debug)
-
-        self.logger.info(f"Train dataset dir: {data_dir}; sample num: {len(train_dataset)}", main_process_only=True)
-        
-        if self.debug:
-            num_workers = 0
-        else:
-            num_workers = 4
-        self.train_loader = DataLoader(train_dataset, batch_size=self.train_batch_size, num_workers = num_workers, shuffle=True, drop_last=True, pin_memory=True)
-        # self.val_loader = DataLoader(val_dataset, batch_size=self.train_batch_size, num_workers = 5, shuffle=False, drop_last=False, pin_memory=True)
-        # self.test_loader = DataLoader(test_dataset, batch_size=self.train_batch_size, num_workers = 5, shuffle=False, drop_last=False, pin_memory=True)
-        self.logger.info(f'step per epoch: {len(self.train_loader)}', main_process_only=True)
-
-
-
-        for batch in self.train_loader:
-            frames_tensor, text, keypoints_dict = batch
-            if isinstance(frames_tensor, torch.Tensor):
-                self.logger.info(f"frames_tensor Shape: {frames_tensor.shape}", main_process_only=True)  #([64, 50])
-            break
     
 
     def training(self, dataloader, epoch, mode='train'):
@@ -268,11 +296,11 @@ class UniSignTrans():
         progress_bar = tqdm(
             iterable=dataloader,
             total=total_steps,
-            desc=f"{mode} Epoch {epoch + 1}/{self.max_epochs}",
+            desc=f"{mode} Epoch {epoch}/{ self.max_epochs}",
         )
 
         torch.autograd.set_detect_anomaly(True)
-        self.logger.info(f"Start {mode} Epoch {epoch + 1}", main_process_only=True)
+        self.logger.info(f"Start {mode} Epoch {epoch}", main_process_only=True)
         for step, batch in enumerate(dataloader):
             if self.debug and step >= 5:
                 break
@@ -319,6 +347,155 @@ class UniSignTrans():
 
         return avg_loss
     
+    def evaluate(self, dataloader, epoch, mode='val'):
+        """
+        Evaluate the UniSignNetwork model on the validation or test set, computing BLEU scores and loss.
+        
+        Args:
+            dataloader: DataLoader for validation or test data
+            epoch: Current epoch number
+            mode: Mode of evaluation ('val' or 'test')
+        
+        Returns:
+            dict: Contains average loss and BLEU scores (1-4)
+        """
+        if mode not in ['val', 'test']:
+            raise ValueError("Mode must be 'val' or 'test'")
+
+        self.UniSignModel.eval()
+        if self.use_feature_encoder:
+            self.feature_encoder.eval()
+        
+        epoch_loss = 0
+        bleu_scores = {1: [], 2: [], 3: [], 4: []}  # Store BLEU scores for each n-gram
+        smoothing = SmoothingFunction().method1  # Smoothing for BLEU score
+        
+        total_steps = len(dataloader)
+        update_steps = 20  # Number of updates per epoch
+        step_interval = max(total_steps // update_steps, 1)
+        
+        progress_bar = tqdm(
+            iterable=dataloader,
+            total=total_steps,
+            desc=f"{mode} Epoch {epoch}/{self.max_epochs}",
+        )
+        
+        self.logger.info(f"Start {mode} Epoch {epoch}", main_process_only=True)
+        
+        with torch.no_grad():  # Disable gradient computation for evaluation
+            for step, batch in enumerate(dataloader):
+                if self.debug and step >= 5:
+                    break
+                
+                if step % step_interval == 0 or step == total_steps - 1:
+                    progress_bar.update(step_interval)
+                
+                frames_tensor, text, keypoints_dict = batch
+                
+                hand_keypoints = keypoints_dict['hand']
+                body_keypoints = keypoints_dict['body'].to(self.device).float()
+                face_keypoints = keypoints_dict['face'].to(self.device).float()
+                
+                right_hand_keypoints = hand_keypoints[:, :, :21, :].to(self.device).float()
+                left_hand_keypoints = hand_keypoints[:, :, 21:, :].to(self.device).float()
+                
+                decoder_input_ids, targets = self.encode_text(text)
+                
+                # Get model output (translated_text, encoder_hidden)
+                translated_text, encoder_hidden = self.UniSignModel(
+                    left_hand_keypoints,
+                    right_hand_keypoints,
+                    body_keypoints,
+                    face_keypoints,
+                    split=mode,
+                    decoder_input_ids=decoder_input_ids
+                )
+                
+                # Compute logits for loss by re-running the model with generated_ids
+                # Encode translated_text back to token IDs
+                generated_ids = self.tokenizer(
+                    translated_text,
+                    return_tensors='pt',
+                    padding=True,
+                    truncation=True,
+                    max_length=128
+                )['input_ids'].to(self.device)
+                    
+                # Wrap encoder_hidden in BaseModelOutput
+                # encoder_outputs = BaseModelOutput(last_hidden_state=encoder_hidden)
+                encoder_outputs = (encoder_hidden,)
+
+                # Run LLM to get logits
+                outputs = self.UniSignModel.llm_trans.model(
+                    encoder_outputs=encoder_outputs,
+                    decoder_input_ids=generated_ids,
+                    return_dict=True
+                )
+                logits = outputs.logits  # Shape: (batch_size, seq_len, vocab_size)
+            
+
+                # Compute translation loss
+                loss = self.compute_translation_loss(targets, logits)
+                epoch_loss += loss.item()
+                
+                # Use translated_text for BLEU score
+                for i, pred_text in enumerate(translated_text):
+                    ref_text = self.tokenizer.decode(targets[i], skip_special_tokens=True)
+                    
+                    # Log sample translations for the first batch
+                    if step == 0 and i < 2:
+                        self.logger.info(
+                            f"Sample {i} - Predicted: {pred_text[:100]}... | Reference: {ref_text[:100]}...",
+                            main_process_only=True
+                        )
+                    
+                    # Tokenize for BLEU score
+                    pred_tokens = pred_text.split()
+                    ref_tokens = ref_text.split()
+                    
+                    # Calculate BLEU scores for n-grams 1 to 4
+                    for n in range(1, 5):
+                        try:
+                            score = sentence_bleu(
+                                [ref_tokens],
+                                pred_tokens,
+                                weights=[1.0/n] * n + [0.0] * (4-n),
+                                smoothing_function=smoothing
+                            )
+                            bleu_scores[n].append(score)
+                        except Exception as e:
+                            self.logger.warning(f"BLEU-{n} computation failed for sample {i}: {e}")
+                            bleu_scores[n].append(0.0)
+                
+                if step == 0:
+                    self.logger.info(
+                        f"GPU memory allocated: {torch.cuda.memory_allocated() / 1024 ** 3:.2f} GB at batch size: {self.train_batch_size}",
+                        main_process_only=True
+                    )
+                    self.logger.info(
+                        f"GPU memory reserved: {torch.cuda.memory_reserved() / 1024 ** 3:.2f} GB",
+                        main_process_only=True
+                    )
+        
+        # Compute average metrics
+        avg_loss = epoch_loss / len(dataloader)
+        avg_bleu = {n: np.mean(scores) for n, scores in bleu_scores.items()}
+        
+        # Log results
+        self.logger.info(
+            f"{mode:<5} Epoch {epoch + 1}, Loss: {avg_loss:.4f}, "
+            f"BLEU-1: {avg_bleu[1]:.4f}, BLEU-2: {avg_bleu[2]:.4f}, "
+            f"BLEU-3: {avg_bleu[3]:.4f}, BLEU-4: {avg_bleu[4]:.4f}",
+            main_process_only=True
+        )
+        
+        return {
+            'loss': avg_loss,
+            'bleu_1': avg_bleu[1],
+            'bleu_2': avg_bleu[2],
+            'bleu_3': avg_bleu[3],
+            'bleu_4': avg_bleu[4]
+        }
     
     def tokenize_text(self, text: str) -> torch.Tensor:
         """Tokenize and encode text into numerical IDs using MBART tokenizer."""
@@ -381,14 +558,14 @@ class UniSignTrans():
 
     # Add this method to your class`
 
-    def run_all(self):
+    def run_training_only(self):
         
         train_loss_history = []
         
         val_loss_history = []
 
         
-        loss_curve_filepath = f'{self.log_dir}/training_loss_{self.name_prefix}.jpg'
+        loss_curve_filepath = f'{self.log_dir}/training_loss_curve.jpg'
 
         self.logger.info("Start training...", main_process_only=True)
         for epoch in range(self.start_epoch, self.max_epochs):
@@ -398,11 +575,11 @@ class UniSignTrans():
 
             if train_loss < self.best_loss:
                 self.best_loss = train_loss
-                ckpt_path = f"{self.ckpt_dir}/{self.name_prefix}_best.pth"
+                ckpt_path = f"{self.ckpt_dir}/{self.weight_name_prefix}_best.pth"
                 self.best_ckpt_path = ckpt_path
                 self.logger.info(f"Best epoch {epoch}: {self.best_loss:.4f}", main_process_only=True)
             else:
-                ckpt_path = f"{self.ckpt_dir}/{self.name_prefix}.pth"
+                ckpt_path = f"{self.ckpt_dir}/{self.weight_name_prefix}.pth"
             self.save_ckpt(epoch, ckpt_path)
 
             
@@ -421,7 +598,8 @@ class UniSignTrans():
                 axes = [axes]
 
             # 第一张子图：train_noise_loss & val_noise_loss
-            axes[0].plot(train_loss_history, label='Train Loss', marker='o', linestyle='-')
+            epochs = range(epoch, epoch + len(train_loss_history))
+            axes[0].plot(epochs, train_loss_history, label='Train Loss', marker='o', linestyle='-')
             axes[0].set_xlabel("Epochs")
             axes[0].set_ylabel("Loss")
             axes[0].set_title("Train Loss")
@@ -430,7 +608,8 @@ class UniSignTrans():
 
             if num_subplots == 2:
                 # 第2张子图：val_noise_loss
-                axes[1].plot(val_loss_history, label='Validation Loss', marker='o', linestyle='-')
+                val_epochs = range(epoch, epoch + len(val_loss_history))
+                axes[1].plot(val_epochs, val_loss_history, label='Validation Loss', marker='o', linestyle='-')
                 axes[1].set_xlabel("Epochs")
                 axes[1].set_ylabel("Loss")
                 axes[1].set_title("Validation Loss")
@@ -452,6 +631,110 @@ class UniSignTrans():
         
 
         self.logger.info("Done!")
+
+    def run_all(self):
+        train_loss_history = []
+        val_loss_history = []
+        bleu_history = {1: [], 2: [], 3: [], 4: []}  # Store BLEU scores for each n-gram
+        
+        loss_curve_filepath = f'{self.log_dir}/loss_curve.jpg'
+        bleu_curve_filepath = f'{self.log_dir}/bleu_scores.jpg'
+        
+        self.logger.info("Start training...", main_process_only=True)
+        
+        for epoch in range(self.start_epoch, self.max_epochs):
+            # Training
+            train_loss = self.training(self.train_loader, epoch, 'train')
+            train_loss_history.append(train_loss)
+            
+            # Validation
+            val_metrics = self.evaluate(self.val_loader, epoch, 'val')
+            val_loss_history.append(val_metrics['loss'])
+            for n in range(1, 5):
+                bleu_history[n].append(val_metrics[f'bleu_{n}'])
+            
+            # Save best model checkpoint
+            if train_loss < self.best_loss:
+                self.best_loss = train_loss
+                ckpt_path = f"{self.ckpt_dir}/{self.weight_name_prefix}_best.pth"
+                self.best_ckpt_path = ckpt_path
+                self.logger.info(f"Best epoch {epoch}: {self.best_loss:.4f}", main_process_only=True)
+            else:
+                ckpt_path = f"{self.ckpt_dir}/{self.weight_name_prefix}.pth"
+            self.save_ckpt(epoch, ckpt_path)
+            
+            # Plot and save loss curve (train and val in one figure)
+            if os.path.exists(loss_curve_filepath):
+                os.remove(loss_curve_filepath)
+            
+            fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+            epochs = range(self.start_epoch, self.start_epoch + len(train_loss_history))
+            
+            # Plot train and validation loss
+            ax.plot(epochs, train_loss_history, label='Train Loss', marker='o', linestyle='-')
+            ax.plot(epochs, val_loss_history, label='Validation Loss', marker='s', linestyle='--')
+            ax.set_xlabel("Epochs")
+            ax.set_ylabel("Loss")
+            ax.set_title("Training and Validation Loss")
+            ax.legend()
+            ax.grid(True)
+            
+            plt.tight_layout()
+            plt.savefig(loss_curve_filepath)
+            plt.close()
+            
+            self.logger.info(f"Saving loss curve to: {loss_curve_filepath}", main_process_only=True)
+            
+            # Plot and save BLEU scores
+            if os.path.exists(bleu_curve_filepath):
+                os.remove(bleu_curve_filepath)
+            
+            fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+            for n in range(1, 5):
+                ax.plot(epochs, bleu_history[n], label=f'BLEU-{n}', marker='o', linestyle='-')
+            
+            ax.set_xlabel("Epochs")
+            ax.set_ylabel("BLEU Score")
+            ax.set_title("Validation BLEU Scores")
+            ax.legend()
+            ax.grid(True)
+            
+            plt.tight_layout()
+            plt.savefig(bleu_curve_filepath)
+            plt.close()
+            
+            self.logger.info(f"Saving BLEU scores plot to: {bleu_curve_filepath}", main_process_only=True)
+            
+            if self.debug and epoch > 2:
+                break
+        
+        # Test the best model on the test set
+        self.logger.info("Loading best model for testing...", main_process_only=True)
+        self.load_ckpt(self.best_ckpt_path)
+        
+        test_metrics = self.evaluate(self.test_loader, epoch=0, mode='test')
+        
+        # Save test results
+        test_results_filepath = f'{self.log_dir}/test_results.txt'
+        with open(test_results_filepath, 'w') as f:
+            f.write(f"Test Results:\n")
+            f.write(f"Loss: {test_metrics['loss']:.4f}\n")
+            f.write(f"BLEU-1: {test_metrics['bleu_1']:.4f}\n")
+            f.write(f"BLEU-2: {test_metrics['bleu_2']:.4f}\n")
+            f.write(f"BLEU-3: {test_metrics['bleu_3']:.4f}\n")
+            f.write(f"BLEU-4: {test_metrics['bleu_4']:.4f}\n")
+        
+        self.logger.info(f"Test results saved to: {test_results_filepath}", main_process_only=True)
+        self.logger.info(
+            f"Test Loss: {test_metrics['loss']:.4f}, "
+            f"BLEU-1: {test_metrics['bleu_1']:.4f}, "
+            f"BLEU-2: {test_metrics['bleu_2']:.4f}, "
+            f"BLEU-3: {test_metrics['bleu_3']:.4f}, "
+            f"BLEU-4: {test_metrics['bleu_4']:.4f}",
+            main_process_only=True
+        )
+        
+        self.logger.info("Done!", main_process_only=True)
     
     def save_ckpt(self, epoch, ckpt_path):
         if os.path.exists(ckpt_path):
@@ -475,14 +758,17 @@ class UniSignTrans():
     def load_ckpt(self, ckpt_path):
         model_dict = torch.load(ckpt_path, map_location=torch.device('cpu'))
         self.UniSignModel.load_state_dict(model_dict['UniSignModel'], strict=False)
-        self.optimizer_UniSignModel.load_state_dict(model_dict['optimizer_uniSign'])
+        if not self.finetune:    
+            self.optimizer_UniSignModel.load_state_dict(model_dict['optimizer_uniSign'])
         if self.use_feature_encoder:
             self.feature_encoder.load_state_dict(model_dict['encoder'], strict=False)
-            self.optimizer_encoder.load_state_dict(model_dict['optimizer_encoder'])
+            if not self.finetune:
+                self.optimizer_encoder.load_state_dict(model_dict['optimizer_encoder'])
 
-        self.start_epoch = model_dict['epoch']
+        if not self.finetune:
+            self.start_epoch = model_dict['epoch']
         self.logger.info(f"Start epoch: {self.start_epoch}", main_process_only=True)
-        if 'best_loss' in model_dict:
+        if 'best_loss' in model_dict and not self.finetune:
             self.best_loss = model_dict['best_loss']
             self.logger.info(f"Best loss: {self.best_loss}", main_process_only=True)
         else:
@@ -490,16 +776,31 @@ class UniSignTrans():
 
         self.logger.info(f'Loading model from: {ckpt_path}', main_process_only=True)
 
+
+
+
+
+def get_args():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+    parser.add_argument("--model_name", type=str, default='uniSign', help="Model name")
+
+    parser.add_argument("--resume", type=str, default=arg_settings["resume"], help="Resume training from a checkpoint")
+    parser.add_argument("--dataset_name", type=str, default=arg_settings["dataset_name"], help="Dataset name")
+    parser.add_argument("--feature_encoder", type=str, default=arg_settings["feature_encoder"], help="Feature encoder name")
+    parser.add_argument("--modality", type=str, default=arg_settings["modality"], help="Modality, e.g., rgb, pose, rgb_pose")
+    parser.add_argument("--finetune", default=arg_settings["finetune"], action="store_true", help="Fine-tune the model")
+    parser.add_argument("--n_frames", type=int, default=arg_settings["n_frames"], help="Number of frames")
+    parser.add_argument("--batch_size", type=int, default=arg_settings["batch_size"], help="Batch size")
+    return parser.parse_args()
+
+
 if __name__ == '__main__':
     mp.set_start_method("spawn", force=True)
 
-    args = argparse.ArgumentParser()
-    args.add_argument("--debug", action="store_true")
-    args.add_argument('--resume', type=str, default=None, help='Resume training from a checkpoint')
-    args.add_argument('--model_name', type=str, default='UniSign', help='Model name')
-    args = args.parse_args()
+    args = get_args()
 
-    args.resume = '/scratch/rhong5/weights/temp_training_weights/singLangTran/20250401-111049_ID-3383124_youtubeASL_UniSign_best.pth'
     # test_forward()
     # test_vec_diffusion()
     # interhand_diffusion_on_mano_para(args)

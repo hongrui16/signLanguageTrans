@@ -64,7 +64,8 @@ class mediapipeKptsMapping:
         291, 321, 314, 17, 181, 91. 
 
         '''
-        self.face_keypoints_mapping = {
+        # Define keypoint indices mapping to MediaPipe landmarks
+        self.face_keypoints_mapping = { 
             0: 46, 1: 52, 2: 55,  # Right eyebrow
             3: 285, 4: 282, 5: 276,  # Left eyebrow
             6: 61, # right mouth corner
@@ -88,12 +89,13 @@ class mediapipeKptsMapping:
             # Mouth
             (6, 7), (7, 8), (8, 9), (9, 10), (10, 11),  # Upper lip
             (11, 12), (12, 13), (13, 14), (14, 15), (15, 16),  # Lower lip
-            (16, 17)  
+            (16, 17) ,
+            (17, 6)
         ]
 
 
         '''
-        body Keypoint Indices (0–8)
+        body Keypoint Indices (0–8) --> mediapipe pose landmarks
         0: Right wrist --> 16
         1: Right elbow --> 14
         2: Right shoulder --> 12

@@ -1,0 +1,8 @@
+origin_img_path: /scratch/rhong5/dataset/youtubeASL_frames/
+origin_img_nums: 16139504
+origin_anno_path: /scratch/rhong5/dataset/youtubeASL_anno/
+origin_anno_nums: 635680
+target_img_path: /projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_frames
+target_img_nums: 16139504
+target_anno_path: /projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_anno
+target_anno_nums: 635680

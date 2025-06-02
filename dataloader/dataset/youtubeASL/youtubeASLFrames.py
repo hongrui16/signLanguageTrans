@@ -16,13 +16,14 @@ if __name__ == '__main__':
 
 from utils.mediapipe_kpts_mapping import MediapipeKptsMapping
 
-class YouTubeASLClip(Dataset):
+class YouTubeASLFrames(Dataset):
     def __init__(self, clip_frame_dir: str, clip_anno_dir: str, num_frames_per_clip: int = 15, **kwargs):
         """
-        Initialize the YouTube ASL dataset loader for pre-cropped clips.
+        Initialize the YouTube ASL dataset loader for pre-processed frames.
         
         Args:
-            clip_dir (str): Directory containing clip (.mp4) and transcript (.txt) files (e.g., 'clip_0.mp4', 'clip_0.txt').
+            clip_frame_dir (str): Directory containing frames (.jpg)
+            clip_anno_dir (str): Directory containing annotations (.json).
             num_frames_per_clip (int): Number of frames to sample per clip (default: 16).
             frame_sample_rate (int): Frames per second to sample from the video (default: 30 FPS).
         """
@@ -181,16 +182,16 @@ class YouTubeASLClip(Dataset):
             frames_tensor = 0
             
         # to tensor
-        body_keypoints_all = torch.from_numpy(body_keypoints_all).float()
+        body_keypoints_all = torch.from_numpy(body_keypoints_all).float() # shape (N, 9, 2)
         hand_keypoints_all = torch.from_numpy(hand_keypoints_all).float()
         face_keypoints_all = torch.from_numpy(face_keypoints_all).float()
 
 
         # Create keypoints dictionary
         keypoints_dict = {
-            'hand': hand_keypoints_all,
-            'body': body_keypoints_all,
-            'face': face_keypoints_all
+            'hand': hand_keypoints_all, # shape (N, 42, 2)  # right hand + left hand
+            'body': body_keypoints_all, # shape (N, 9, 2)
+            'face': face_keypoints_all # shape (N, 18, 2)
         }
 
         return (frames_tensor, text, keypoints_dict)
@@ -202,7 +203,7 @@ if __name__ == '__main__':
     clip_frame_dir = '/scratch/rhong5/dataset/youtubeASL_frames'
 
 
-    dataset = YouTubeASLClip(clip_frame_dir, clip_anno_dir, load_frame=True)
+    dataset = YouTubeASLFrames(clip_frame_dir, clip_anno_dir, load_frame=True)
   
     
     # get one sample and draw keypoints on the image
@@ -221,6 +222,14 @@ if __name__ == '__main__':
     frame = frame.astype(np.uint8)
 
     h, w, _ = frame.shape
+
+    hand_keypoints_all = keypoints_dict['hand'] # right hand + left hand
+    body_keypoints_all = keypoints_dict['body']
+    face_keypoints_all = keypoints_dict['face']
+    print(f"Hand keypoints shape: {hand_keypoints_all.shape}")
+    print(f"Body keypoints shape: {body_keypoints_all.shape}")
+    print(f"Face keypoints shape: {face_keypoints_all.shape}")
+
     # Draw keypoints
     hand_keypoints = keypoints_dict['hand'][0].numpy()
     body_keypoints = keypoints_dict['body'][0].numpy()

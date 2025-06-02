@@ -26,7 +26,7 @@ class GraphConvolution(nn.Module):
         batch_size, T, N, C = x.shape  # Extract shape
 
         # Reshape to (batch_size * T, N, C) for matrix multiplication
-        x = x.view(batch_size * T, N, C)  
+        x = x.reshape(batch_size * T, N, C)  
 
         # Apply adjacency matrix multiplication across each frame separately
         x = torch.einsum('ij,bnc->bnc', adj, x)  # Efficient batch-wise operation
@@ -35,7 +35,7 @@ class GraphConvolution(nn.Module):
         x = self.fc(x)  # (batch_size * T, N, out_features)
 
         # Reshape back to (batch_size, T, N, out_features)
-        x = x.view(batch_size, T, N, -1)
+        x = x.reshape(batch_size, T, N, -1)
 
         return F.relu(x)
 
@@ -76,26 +76,26 @@ class PoseEncoder(nn.Module):
         batch_size, T, N, C = x.shape  # Keep original shape
 
         # Step 1: Flatten for Linear Projection
-        x = x.view(-1, C)  # (batch_size * T * N, C=2)
+        x = x.reshape(-1, C)  # (batch_size * T * N, C=2)
 
         # Step 2: Linear projection (C=2 → C=64)
         x = self.linear(x)  # (batch_size * T * N, 64)
 
         # Step 3: Reshape back to (batch_size, T, N, 64)
-        x = x.view(batch_size, T, N, -1)
+        x = x.reshape(batch_size, T, N, -1)
 
         # Step 4: Pass to GCN
         x = self.gc1(x, adj)  # (batch_size, T, N, 64)
         bs, T, num_kpts, feature = x.shape
-        x = self.bn1(x.view(-1, feature)).view(bs, T, num_kpts, feature)
+        x = self.bn1(x.reshape(-1, feature)).reshape(bs, T, num_kpts, feature)
         
         x = self.gc2(x, adj)  # (batch_size, T, N, 128)
         bs, T, num_kpts, feature = x.shape
-        x = self.bn2(x.view(-1, feature)).view(bs, T, num_kpts, feature)
+        x = self.bn2(x.reshape(-1, feature)).reshape(bs, T, num_kpts, feature)
         
         x = self.gc3(x, adj)  # (batch_size, T, N, 256)
         bs, T, num_kpts, feature = x.shape
-        x = self.bn3(x.view(-1, feature)).view(bs, T, num_kpts, feature)
+        x = self.bn3(x.reshape(-1, feature)).reshape(bs, T, num_kpts, feature)
 
         return x  # (batch_size, T, N, 256)
 

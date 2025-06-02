@@ -13,7 +13,6 @@
 #SBATCH --cpus-per-task=2            # 每个任务使用 2 个 CPU 核
 
 
-
 set echo
 umask 0027
 
@@ -27,8 +26,8 @@ source /home/rhong5/py310Torch/bin/activate
 
 cd /home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/youtubeASL
 
-### originally, start_idx was 227885, and end_idx was 298585
-python youTubeASLDumpJson.py --start_idx 227885 --end_idx 298585
+### originally, start_idx was 510685, and end_idx was 582092
+python youTubeASLDumpJson.py --start_idx 530657 --end_idx 582092 
 
 
 # torchrun --nnodes=${NUM_NODES} --nproc_per_node=${GPUS_PER_NODE} train_VAE.py --debug 
