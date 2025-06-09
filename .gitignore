@@ -9,6 +9,7 @@ temp*
 *.zip
 *.tar
 *.tar.gz
+*.pt
 
 # C extensions
 *.so

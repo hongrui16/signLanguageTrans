@@ -708,9 +708,13 @@ def main_dump_anno_json(args):
         save_anno_dir = 'temp/anno'
         output_dir = 'temp/output'
     else:
-        save_img_dir = '/projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_frames'
-        save_anno_dir = '/projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_anno'
+        # save_img_dir = '/projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_frames'
+        # save_anno_dir = '/projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_anno'
+        save_img_dir = '/scratch/rhong5/dataset/youtubeASL_frame_pose_0602/youtubeASL_frames'
+        save_anno_dir = '/scratch/rhong5/dataset/youtubeASL_frame_pose_0602/youtubeASL_anno'
 
+    os.makedirs(save_img_dir, exist_ok=True)
+    os.makedirs(save_anno_dir, exist_ok=True)
 
     dataset.dump_anno(save_img_dir, save_anno_dir, start_idx=args.start_idx, end_idx=args.end_idx)
     print("Dumped annotation data to JSON file.")

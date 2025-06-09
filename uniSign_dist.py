@@ -69,7 +69,8 @@ class UniSignTrans:
 
         
         self.weight_name_prefix = f'{time_stamp}_JID-{slurm_job_id}_{self.model_name}_{self.dataset_name}_{self.modality}'
-        log_dir = f'Zlog/{time_stamp}_JID-{slurm_job_id}'
+        dir_str = f'{time_stamp}_JID-{slurm_job_id}'
+        log_dir = f'Zlog/{dir_str}'
         self.log_dir = log_dir
 
         if self.accelerator.is_main_process:
@@ -82,7 +83,7 @@ class UniSignTrans:
         if dist.is_initialized():
             dist.barrier()
             
-        self.ckpt_dir = '/scratch/rhong5/weights/temp_training_weights/singLangTran'
+        self.ckpt_dir = f'/scratch/rhong5/weights/temp_training_weights/signLanguageTrans/{dir_str}'
         if self.accelerator.is_main_process:
             os.makedirs(self.ckpt_dir, exist_ok=True)
 
