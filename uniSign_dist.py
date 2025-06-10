@@ -68,9 +68,10 @@ class UniSignTrans:
         self.init_distributed()
 
         
-        self.weight_name_prefix = f'{time_stamp}_JID-{slurm_job_id}_{self.model_name}_{self.dataset_name}_{self.modality}'
-        dir_str = f'{time_stamp}_JID-{slurm_job_id}'
-        log_dir = f'Zlog/{dir_str}'
+        self.weight_name_prefix = f'{self.model_name}_{self.modality}'
+        dir_str = f'{self.dataset_name}/{time_stamp}_JID-{slurm_job_id}'
+        
+        log_dir = f'zlog/{dir_str}'
         self.log_dir = log_dir
 
         if self.accelerator.is_main_process:

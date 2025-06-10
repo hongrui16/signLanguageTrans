@@ -11,7 +11,10 @@ if __name__ == '__main__':
 from dataloader.dataset.youtubeASL.youtubeASL import YouTubeASL
 from dataloader.dataset.youtubeASL.youtubeASLFrames import YouTubeASLFrames
 from dataloader.dataset.youtubeASL.youTubeASLOnlineDet import YouTubeASLOnlineDet
+from dataloader.dataset.youtubeASL.youtubeASLFramesNaive import YouTubeASLFramesNaive
 from dataloader.dataset.how2sign.how2sign_openpose import How2SignDataset
+
+
 
 def get_dataloader(
     dataset_name,
@@ -39,14 +42,20 @@ def get_dataloader(
     else:
         num_workers = min(5, os.cpu_count() // world_size)  # Scale workers with available CPUs
 
-    if dataset_name == 'YouTubeASLFrames':
+    if dataset_name in ['YouTubeASLFrames', 'YouTubeASLFramesNaive']:
         data_dir = '/scratch/rhong5/dataset/youtube_ASL/'
-        train_dataset = YouTubeASLFrames(
-            clip_frame_dir='/scratch/rhong5/dataset/youtubeASL_frames',
-            clip_anno_dir='/scratch/rhong5/dataset/youtubeASL_anno',
-            num_frames_per_clip=n_frames,
-            debug=debug
-        )
+        
+        if dataset_name == 'YouTubeASLFramesNaive':
+            train_dataset = YouTubeASLFramesNaive(
+                debug=debug
+            )
+        else:
+            train_dataset = YouTubeASLFrames(
+                clip_frame_dir='/scratch/rhong5/dataset/youtubeASL_frames',
+                clip_anno_dir='/scratch/rhong5/dataset/youtubeASL_anno',
+                num_frames_per_clip=n_frames,
+                debug=debug
+            )
 
         if logger is not None:
             logger.info(f"Train dataset dir: {data_dir}; sample num: {len(train_dataset)}", main_process_only=True)
@@ -86,7 +95,7 @@ def get_dataloader(
         test_sampler = None
 
     
-    if dataset_name == 'YouTubeASLOnlineDet':
+    elif dataset_name == 'YouTubeASLOnlineDet':
         video_dir = '/projects/kosecka/hongrui/dataset/youtubeASL/youtube_ASL/'
         train_dataset = YouTubeASLOnlineDet(
             video_dir = video_dir,
@@ -209,6 +218,7 @@ def get_dataloader(
 
 if __name__ == '__main__':
     dataset_name = 'how2sign'
+    dataset_name = 'YouTubeASLFramesNaive'
     train_loader, val_loader, test_loader, train_dataset, val_dataset, test_dataset = get_dataloader(dataset_name)
     for i, data in enumerate(val_loader):
         print(i)

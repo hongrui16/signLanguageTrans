@@ -3,8 +3,8 @@
 #SBATCH --partition=contrib-gpuq                    # need to set 'gpuq' or 'contrib-gpuq' partition
 #SBATCH --qos=gpu                           # need to select 'gpu' QOS or other relevant QOS
 #SBATCH --job-name=unisign                   # Job name
-#SBATCH --output=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/Zlog/%u/%x-%N-%j.out   # Output file
-#SBATCH --error=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/Zlog/%u/%x-%N-%j.err    # Error file
+#SBATCH --output=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/zlog/zslurm/%x-%N-%j.out   # Output file
+#SBATCH --error=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/zlog/zslurm/%x-%N-%j.err    # Error file
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=2                # One task per GPU
 #SBATCH --gres=gpu:A100.80gb:2             # Request 2 A100 GPUs
@@ -32,7 +32,7 @@ cd /home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans
 
 
 ## debug
-accelerate launch --num_processes=2 --num_machines=1 --machine_rank=0 --main_process_ip=localhost --main_process_port=12345 \
+accelerate launch --num_processes=2 --num_machines=1 --machine_rank=0 --main_process_ip=localhost --main_process_port=39345 \
     uniSign_dist.py --debug 2> >(grep -v "absl::InitializeLog" | grep -v "gl_context_egl.cc" | grep -v "gl_context.cc" >&2)
 
 
