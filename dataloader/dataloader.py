@@ -47,14 +47,16 @@ def get_dataloader(
         
         if dataset_name == 'YouTubeASLFramesNaive':
             train_dataset = YouTubeASLFramesNaive(
-                debug=debug
+                debug=debug,
+                logger=logger,
             )
         else:
             train_dataset = YouTubeASLFrames(
                 clip_frame_dir='/scratch/rhong5/dataset/youtubeASL_frames',
                 clip_anno_dir='/scratch/rhong5/dataset/youtubeASL_anno',
                 num_frames_per_clip=n_frames,
-                debug=debug
+                debug=debug,
+                logger=logger,
             )
 
         if logger is not None:

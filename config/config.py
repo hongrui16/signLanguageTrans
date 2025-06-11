@@ -10,8 +10,8 @@ arg_settings = {
     "modality": 'pose',
     'finetune': True,
     'n_frames': 200,
-    'batch_size': 20,
-    'debug': True,
+    'batch_size': 45,
+    'debug': False,
     'max_epochs': 55,
     'use_feature_encoder': False,
 }

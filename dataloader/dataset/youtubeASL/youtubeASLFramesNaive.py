@@ -8,6 +8,7 @@ from torch.utils.data import Dataset
 import json
 import heapq
 import sys
+import torch.distributed as dist
 
 if __name__ == '__main__':
     parent_dir = os.path.join(os.path.dirname(__file__), '../../..')
@@ -87,22 +88,27 @@ class YouTubeASLFramesNaive(Dataset):
         """Return the total number of clips in the dataset."""
         return len(self.annos_files)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, str, dict]:
-        """
-        Get a specific clip from the dataset.
-        
-        Args:
-            idx (int): Index of the clip.
-        
-        Returns:
-            Tuple of (frames_tensor, text, keypoints_dict) where:
-            - frames_tensor: Tensor of shape (N, 3, 224, 224)
-            - text: String caption for the clip
-            - keypoints_dict: Dict with 'hand', 'body', 'face' keys, each a list of (x, y, confidence)
-        """
+    def __getitem__(self, idx: int, retry_count=0) -> Tuple[torch.Tensor, str, dict]:
+        if self.debug:
+            rank = dist.get_rank() if dist.is_initialized() else 0
+            if self.logger:
+                self.logger.info(f"[Rank {rank}] fetching sample index {idx}")
+            else:
+                print(f"[Rank {rank}] fetching sample index {idx}")
+
         clip_json_file = self.annos_files[idx]
-        with open(clip_json_file, 'r', encoding='utf-8') as f:
-            clip_anno_info = json.load(f)
+        try:
+            with open(clip_json_file, 'r', encoding='utf-8') as f:
+                clip_anno_info = json.load(f)
+        except json.JSONDecodeError as e:
+            if retry_count >= 5:
+                raise RuntimeError(f"Too many corrupt JSON retries starting from index {idx}")
+            if self.logger:
+                self.logger.error(f"Error decoding JSON from {clip_json_file}: {e}")
+            else:
+                print(f"Error decoding JSON from {clip_json_file}: {e}")
+            ran_id = np.random.randint(0, len(self.annos_files)-1)
+            return self.__getitem__(ran_id, retry_count + 1)
 
         json_filename = os.path.basename(clip_json_file)
         json_dir = os.path.dirname(clip_json_file)

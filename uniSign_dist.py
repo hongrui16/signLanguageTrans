@@ -27,6 +27,12 @@ from torch.optim.lr_scheduler import StepLR
 from typing import List, Tuple
 from transformers.modeling_outputs import BaseModelOutput
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+
+from transformers import MBartTokenizer
+from transformers import AutoTokenizer
+
+
+
 from network.uni_sign_network import UniSignNetwork
 from network.feature_encoder import get_encoder
 from transformers import MBartTokenizer, MBartForConditionalGeneration
@@ -115,30 +121,30 @@ class UniSignTrans:
         logging.getLogger("gl_context").setLevel(logging.ERROR)
         logging.getLogger("gl_context_egl").setLevel(logging.ERROR)
 
-        self.logger.info(f"\n{os.path.basename(__file__)}\n", main_process_only=True)
-        self.logger.info(f'logging_dir: {self.log_dir}', main_process_only=True)
-        self.logger.info(f'output_ckpts_dir: {self.ckpt_dir}\n', main_process_only=True)
+        self.logger.info(f"\n{os.path.basename(__file__)}\n", main_process_only=self.accelerator.is_main_process)
+        self.logger.info(f'logging_dir: {self.log_dir}', main_process_only=self.accelerator.is_main_process)
+        self.logger.info(f'output_ckpts_dir: {self.ckpt_dir}\n', main_process_only=self.accelerator.is_main_process)
 
         self.start_epoch = 0
         self.best_loss = float('inf')
         self.max_epochs = 45
-        self.logger.info(f"Training epochs: {self.max_epochs}", main_process_only=True)
+        self.logger.info(f"Training epochs: {self.max_epochs}", main_process_only=self.accelerator.is_main_process)
 
-        self.logger.info(f"feature encoder: {self.feature_encoder_name}", main_process_only=True)
+        self.logger.info(f"feature encoder: {self.feature_encoder_name}", main_process_only=self.accelerator.is_main_process)
 
-        self.logger.info(f"Use use_feature_encoder: {self.use_feature_encoder}", main_process_only=True)
+        self.logger.info(f"Use use_feature_encoder: {self.use_feature_encoder}", main_process_only=self.accelerator.is_main_process)
 
         self.device = self.accelerator.device
-        self.logger.info(f"Using device: {self.device}", main_process_only=True)
+        self.logger.info(f"Using device: {self.device}", main_process_only=self.accelerator.is_main_process)
 
-        self.logger.info(f"Dataset name: {self.dataset_name}", main_process_only=True)
+        self.logger.info(f"Dataset name: {self.dataset_name}", main_process_only=self.accelerator.is_main_process)
 
         self.train_batch_size = self.batch_size
         if self.debug:
             self.train_batch_size = 5
-        self.logger.info(f"Train batch size: {self.train_batch_size}", main_process_only=True)
+        self.logger.info(f"Train batch size: {self.train_batch_size}", main_process_only=self.accelerator.is_main_process)
 
-        self.logger.info("Dataloader configuration.", main_process_only=True)
+        self.logger.info("Dataloader configuration.", main_process_only=self.accelerator.is_main_process)
         train_loader, val_loader, test_loader, \
         train_dataset,val_dataset, test_dataset, \
         self.train_sampler, self.val_sampler, self.test_sampler  = get_dataloader(
@@ -156,19 +162,19 @@ class UniSignTrans:
         )
 
         if isinstance(train_loader.sampler, DistributedSampler):
-            self.logger.info("Train loader correctly uses DistributedSampler", main_process_only=True)
+            self.logger.info("Train loader correctly uses DistributedSampler", main_process_only=self.accelerator.is_main_process)
         else:
-            self.logger.warning("Train loader does NOT use DistributedSampler", main_process_only=True)
+            self.logger.warning("Train loader does NOT use DistributedSampler", main_process_only=self.accelerator.is_main_process)
 
         if not val_loader is None and isinstance(val_loader.sampler, DistributedSampler):
-            self.logger.info("Val loader correctly uses DistributedSampler", main_process_only=True)
+            self.logger.info("Val loader correctly uses DistributedSampler", main_process_only=self.accelerator.is_main_process)
         else:
-            self.logger.warning("Val loader does NOT use DistributedSampler", main_process_only=True)
+            self.logger.warning("Val loader does NOT use DistributedSampler", main_process_only=self.accelerator.is_main_process)
         
         if not test_loader is None and isinstance(test_loader.sampler, DistributedSampler):
-            self.logger.info("Test loader correctly uses DistributedSampler", main_process_only=True)
+            self.logger.info("Test loader correctly uses DistributedSampler", main_process_only=self.accelerator.is_main_process)
         else:
-            self.logger.warning("Test loader does NOT use DistributedSampler", main_process_only=True)
+            self.logger.warning("Test loader does NOT use DistributedSampler", main_process_only=self.accelerator.is_main_process)
 
         self.train_loader = self.accelerator.prepare(train_loader)
         self.val_loader = self.accelerator.prepare(val_loader) if val_loader else None
@@ -176,15 +182,15 @@ class UniSignTrans:
         self.train_dataset = train_dataset
         self.val_dataset = val_dataset
         self.test_dataset = test_dataset
-        self.logger.info(f"Train dataset size: {len(self.train_dataset)}", main_process_only=True)
-        self.logger.info(f"Val dataset size: {len(self.val_dataset) if self.val_dataset else 0}", main_process_only=True)
-        self.logger.info(f"Test dataset size: {len(self.test_dataset) if self.test_dataset else 0}", main_process_only=True)
-        self.logger.info(f"Train batch size: {self.train_batch_size}", main_process_only=True)
+        self.logger.info(f"Train dataset size: {len(self.train_dataset)}", main_process_only=self.accelerator.is_main_process)
+        self.logger.info(f"Val dataset size: {len(self.val_dataset) if self.val_dataset else 0}", main_process_only=self.accelerator.is_main_process)
+        self.logger.info(f"Test dataset size: {len(self.test_dataset) if self.test_dataset else 0}", main_process_only=self.accelerator.is_main_process)
+        self.logger.info(f"Train batch size: {self.train_batch_size}", main_process_only=self.accelerator.is_main_process)
         
 
 
         # Log sampler type after accelerator.prepare for debugging
-        self.logger.info(f"Train loader sampler after prepare: {type(self.train_loader.sampler).__name__}", main_process_only=True)
+        self.logger.info(f"Train loader sampler after prepare: {type(self.train_loader.sampler).__name__}", main_process_only=self.accelerator.is_main_process)
 
         # Log sample batch shapes
         for batch in self.train_loader:
@@ -192,11 +198,11 @@ class UniSignTrans:
             face_keypoints = keypoints_dict['face'].to(self.device).float()
             body_keypoints = keypoints_dict['body'].to(self.device).float()
             hand_keypoints = keypoints_dict['hand'][:, :, :21, :].to(self.device).float()
-            self.logger.info(f"hand_keypoints Shape: {hand_keypoints.shape}", main_process_only=True)
-            self.logger.info(f"body_keypoints Shape: {body_keypoints.shape}", main_process_only=True)
-            self.logger.info(f"face_keypoints Shape: {face_keypoints.shape}", main_process_only=True)
+            self.logger.info(f"hand_keypoints Shape: {hand_keypoints.shape}", main_process_only=self.accelerator.is_main_process)
+            self.logger.info(f"body_keypoints Shape: {body_keypoints.shape}", main_process_only=self.accelerator.is_main_process)
+            self.logger.info(f"face_keypoints Shape: {face_keypoints.shape}", main_process_only=self.accelerator.is_main_process)
             if isinstance(frames_tensor, torch.Tensor):
-                self.logger.info(f"frames_tensor Shape: {frames_tensor.shape}", main_process_only=True)
+                self.logger.info(f"frames_tensor Shape: {frames_tensor.shape}", main_process_only=self.accelerator.is_main_process)
             break
 
         if 'rgb' in self.modality.lower() and self.use_feature_encoder:
@@ -221,8 +227,13 @@ class UniSignTrans:
             "face": len(self.face_indices)
         }
 
-        self.tokenizer = MBartTokenizer.from_pretrained("facebook/mbart-large-50", src_lang="en_XX", tgt_lang="en_XX")
-        self.logger.info("Tokenizer loaded.", main_process_only=True)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+                "facebook/mbart-large-50",
+                src_lang="en_XX",
+                tgt_lang="en_XX"
+            )
+
+        self.logger.info("Tokenizer loaded.", main_process_only=self.accelerator.is_main_process)
 
         self.UniSignModel = UniSignNetwork(hidden_dim=256, LLM_name="facebook/mbart-large-50", device=self.device, tokenizer=self.tokenizer)
         self.UniSignModel.float().to(self.device)
@@ -243,11 +254,11 @@ class UniSignTrans:
 
         if self.resume_path is not None:
             self.load_ckpt_after_acceleratorPrepare(self.resume_path)
-            self.logger.info(f"Resuming from checkpoint: {self.resume_path}", main_process_only=True)
+            self.logger.info(f"Resuming from checkpoint: {self.resume_path}", main_process_only=self.accelerator.is_main_process)
         
         if dist.is_initialized():
             self.world_size = dist.get_world_size()
-            self.logger.info(f"[AFTER PREPARE] Distributed training initialized: {dist.is_initialized()}", main_process_only=True)
+            self.logger.info(f"[AFTER PREPARE] Distributed training initialized: {dist.is_initialized()}", main_process_only=self.accelerator.is_main_process)
             self.logger.info(f"[AFTER PREPARE] World size: {dist.get_world_size()}, Rank: {dist.get_rank()}")
         else:
             self.logger.info("Distributed training not initialized.")
@@ -265,6 +276,12 @@ class UniSignTrans:
 
 
     def training(self, dataloader, epoch, mode='train'):
+        if isinstance(self.train_sampler, DistributedSampler):
+            self.train_sampler.set_epoch(epoch)
+            self.logger.info(f"Setting epoch for DistributedSampler: {epoch}, rank: {self.accelerator.process_index}", main_process_only=self.accelerator.is_main_process)
+        else:
+            self.logger.warning(f"Train loader sampler is not DistributedSampler, skipping epoch setting, rank: {self.accelerator.process_index}", main_process_only=self.accelerator.is_main_process)
+
         self.UniSignModel.train()
         if self.use_feature_encoder:
             self.feature_encoder.train()
@@ -281,7 +298,7 @@ class UniSignTrans:
             disable=not self.accelerator.is_main_process
         )
 
-        self.logger.info(f"Start {mode} Epoch {epoch}", main_process_only=True)
+        self.logger.info(f"Start {mode} Epoch {epoch}", main_process_only=self.accelerator.is_main_process)
         for step, batch in enumerate(dataloader):
             if self.debug and step >= 5:
                 break
@@ -327,20 +344,40 @@ class UniSignTrans:
             if epoch == 0 and step == 0 and self.accelerator.is_main_process:
                 self.logger.info(
                     f"GPU memory allocated: {torch.cuda.memory_allocated() / 1024 ** 3:.2f} GB at batch size: {self.train_batch_size}",
-                    main_process_only=True
+                    main_process_only=self.accelerator.is_main_process
                 )
                 self.logger.info(
                     f"GPU memory reserved: {torch.cuda.memory_reserved() / 1024 ** 3:.2f} GB",
-                    main_process_only=True
+                    main_process_only=self.accelerator.is_main_process
                 )
 
         avg_loss = epoch_loss / len(dataloader)
-        self.logger.info(f"{mode:<5} Epoch {epoch + 1}, Loss: {avg_loss:.4f}", main_process_only=True)
+        self.logger.info(f"{mode:<5} Epoch {epoch + 1}, Loss: {avg_loss:.4f}", main_process_only=self.accelerator.is_main_process)
         return avg_loss
 
     def evaluate(self, dataloader, epoch, mode='val'):
+        
         if mode not in ['val', 'test']:
             raise ValueError("Mode must be 'val' or 'test'")
+
+        if mode == 'val':
+            sampler = self.val_sampler
+        elif mode == 'test':
+            sampler = self.test_sampler
+
+        if isinstance(sampler, DistributedSampler):
+            sampler.set_epoch(epoch)
+            self.logger.info(
+                f"Setting epoch for {mode} DistributedSampler: {epoch}, rank: {self.accelerator.process_index}",
+                main_process_only=self.accelerator.is_main_process
+            )
+        else:
+            self.logger.warning(
+                f"{mode.capitalize()} loader sampler is not DistributedSampler, skipping epoch setting.",
+                main_process_only=self.accelerator.is_main_process
+            )
+
+
 
         self.UniSignModel.eval()
         if self.use_feature_encoder:
@@ -361,7 +398,7 @@ class UniSignTrans:
             disable=not self.accelerator.is_main_process
         )
 
-        self.logger.info(f"Start {mode} Epoch {epoch}", main_process_only=True)
+        self.logger.info(f"Start {mode} Epoch {epoch}", main_process_only=self.accelerator.is_main_process)
 
         with torch.no_grad():
             for step, batch in enumerate(dataloader):
@@ -419,7 +456,7 @@ class UniSignTrans:
                     if step == 0 and i < 2 and self.accelerator.is_main_process:
                         self.logger.info(
                             f"Sample {i} - Predicted: {pred_text[:100]}... | Reference: {ref_text[:100]}...",
-                            main_process_only=True
+                            main_process_only=self.accelerator.is_main_process
                         )
 
                     pred_tokens = pred_text.split()
@@ -441,11 +478,11 @@ class UniSignTrans:
                 if step == 0 and self.accelerator.is_main_process:
                     self.logger.info(
                         f"GPU memory allocated: {torch.cuda.memory_allocated() / 1024 ** 3:.2f} GB at batch size: {self.train_batch_size}",
-                        main_process_only=True
+                        main_process_only=self.accelerator.is_main_process
                     )
                     self.logger.info(
                         f"GPU memory reserved: {torch.cuda.memory_reserved() / 1024 ** 3:.2f} GB",
-                        main_process_only=True
+                        main_process_only=self.accelerator.is_main_process
                     )
 
         local_sample_count = len(bleu_scores[1]) if 1 in bleu_scores and bleu_scores[1] else 0  # 假设 bleu_scores[n] 长度一致
@@ -476,7 +513,7 @@ class UniSignTrans:
             f"{mode:<5} Epoch {epoch + 1}, Loss: {avg_loss:.4f}, "
             f"BLEU-1: {avg_bleu.get(1, 0.0):.4f}, BLEU-2: {avg_bleu.get(2, 0.0):.4f}, "
             f"BLEU-3: {avg_bleu.get(3, 0.0):.4f}, BLEU-4: {avg_bleu.get(4, 0.0):.4f}",
-            main_process_only=True
+            main_process_only=self.accelerator.is_main_process
         )
 
         # 返回结果
@@ -529,15 +566,15 @@ class UniSignTrans:
         val_loss_history = []
         loss_curve_filepath = f'{self.log_dir}/training_loss_curve.jpg'
 
-        self.logger.info("Start training...", main_process_only=True)
+        self.logger.info("Start training...", main_process_only=self.accelerator.is_main_process)
         for epoch in range(self.start_epoch, self.max_epochs):
-            self.logger.info('\n' + '-' * 50, main_process_only=True)
+            self.logger.info('\n' + '-' * 50, main_process_only=self.accelerator.is_main_process)
             # Set epoch for DistributedSampler if applicable
             if isinstance(self.train_sampler, DistributedSampler):
                 self.train_sampler.set_epoch(epoch)
-                self.logger.info(f"Setting epoch for DistributedSampler: {epoch}, rank: {self.accelerator.process_index}")
+                self.logger.info(f"Setting epoch for DistributedSampler: {epoch}, rank: {self.accelerator.process_index}", main_process_only=self.accelerator.is_main_process)
             else:
-                self.logger.warning(f"Train loader sampler is not DistributedSampler, skipping epoch setting, rank: {self.accelerator.process_index}")
+                self.logger.warning(f"Train loader sampler is not DistributedSampler, skipping epoch setting, rank: {self.accelerator.process_index}", main_process_only=self.accelerator.is_main_process)
 
             train_loss = self.training(self.train_loader, epoch, 'train')
             train_loss_history.append(train_loss)
@@ -546,7 +583,7 @@ class UniSignTrans:
                 self.best_loss = train_loss
                 ckpt_path = f"{self.ckpt_dir}/{self.weight_name_prefix}_best.pth"
                 self.best_ckpt_path = ckpt_path
-                self.logger.info(f"Best epoch {epoch}: {self.best_loss:.4f}", main_process_only=True)
+                self.logger.info(f"Best epoch {epoch}: {self.best_loss:.4f}", main_process_only=self.accelerator.is_main_process)
             else:
                 ckpt_path = f"{self.ckpt_dir}/{self.weight_name_prefix}.pth"
                 if self.best_ckpt_path is None:
@@ -583,12 +620,12 @@ class UniSignTrans:
                 plt.tight_layout()
                 plt.savefig(loss_curve_filepath)
                 plt.close()
-                self.logger.info(f"Saving loss curve to: {loss_curve_filepath}\n", main_process_only=True)
+                self.logger.info(f"Saving loss curve to: {loss_curve_filepath}\n", main_process_only=self.accelerator.is_main_process)
 
             if self.debug and epoch > 2:
                 break
 
-        self.logger.info("Done!", main_process_only=True)
+        self.logger.info("Done!", main_process_only=self.accelerator.is_main_process)
         self.cleanup()
 
     def run_all(self):
@@ -599,16 +636,16 @@ class UniSignTrans:
         loss_curve_filepath = f'{self.log_dir}/loss_curve.jpg'
         bleu_curve_filepath = f'{self.log_dir}/bleu_scores.jpg'
 
-        self.logger.info("Start training...", main_process_only=True)
+        self.logger.info("Start training...", main_process_only=self.accelerator.is_main_process)
 
         for epoch in range(self.start_epoch, self.max_epochs):
-            self.logger.info('\n' + '-' * 50, main_process_only=True)
+            self.logger.info('\n' + '-' * 50, main_process_only=self.accelerator.is_main_process)
             
             if isinstance(self.train_sampler, DistributedSampler):
                 self.train_sampler.set_epoch(epoch)
-                self.logger.info(f"Setting epoch {epoch} for train DistSampler, rank: {self.accelerator.process_index}/{self.world_size}", main_process_only=True)
+                self.logger.info(f"Setting epoch {epoch} for train DistSampler, rank: {self.accelerator.process_index}/{self.world_size}", main_process_only=self.accelerator.is_main_process)
             else:
-                self.logger.warning(f"Train loader sampler is not DistSampler, skipping epoch setting, rank: {self.accelerator.process_index}")
+                self.logger.warning(f"Train loader sampler is not DistSampler, skipping epoch setting, rank: {self.accelerator.process_index}", main_process_only=self.accelerator.is_main_process)
 
             
             train_loss = self.training(self.train_loader, epoch, 'train')
@@ -617,9 +654,9 @@ class UniSignTrans:
             if not self.val_loader is None:
                 if isinstance(self.val_sampler, DistributedSampler):
                     self.val_sampler.set_epoch(epoch)
-                    self.logger.info(f"Setting epoch {epoch} for Val DistSampler, rank: {self.accelerator.process_index}/{self.world_size}", main_process_only=True)
+                    self.logger.info(f"Setting epoch {epoch} for Val DistSampler, rank: {self.accelerator.process_index}/{self.world_size}", main_process_only=self.accelerator.is_main_process)
                 else:
-                    self.logger.warning(f"Val loader sampler is not DistSampler, skipping epoch setting, rank: {self.accelerator.process_index}", main_process_only=True)
+                    self.logger.warning(f"Val loader sampler is not DistSampler, skipping epoch setting, rank: {self.accelerator.process_index}", main_process_only=self.accelerator.is_main_process)
                 
                 val_metrics = self.evaluate(self.val_loader, epoch, 'val')
                 val_loss_history.append(val_metrics['loss'])
@@ -630,7 +667,7 @@ class UniSignTrans:
                 self.best_loss = train_loss
                 ckpt_path = f"{self.ckpt_dir}/{self.weight_name_prefix}_best.pth"
                 self.best_ckpt_path = ckpt_path
-                self.logger.info(f"Best epoch {epoch}: {self.best_loss:.4f}", main_process_only=True)
+                self.logger.info(f"Best epoch {epoch}: {self.best_loss:.4f}", main_process_only=self.accelerator.is_main_process)
             else:
                 ckpt_path = f"{self.ckpt_dir}/{self.weight_name_prefix}.pth"
             if self.accelerator.is_main_process:
@@ -653,7 +690,7 @@ class UniSignTrans:
                 plt.tight_layout()
                 plt.savefig(loss_curve_filepath)
                 plt.close()
-                self.logger.info(f"Saving loss curve to: {loss_curve_filepath}", main_process_only=True)
+                self.logger.info(f"Saving loss curve to: {loss_curve_filepath}", main_process_only=self.accelerator.is_main_process)
 
                 if val_loss_history:
                     if os.path.exists(bleu_curve_filepath):
@@ -669,24 +706,24 @@ class UniSignTrans:
                     plt.tight_layout()
                     plt.savefig(bleu_curve_filepath)
                     plt.close()
-                    self.logger.info(f"Saving BLEU scores plot to: {bleu_curve_filepath}", main_process_only=True)
+                    self.logger.info(f"Saving BLEU scores plot to: {bleu_curve_filepath}", main_process_only=self.accelerator.is_main_process)
 
             if self.debug and epoch > 1:
                 break
 
         if not self.test_loader is None:
             if self.accelerator.is_main_process:
-                self.logger.info("Loading best model for testing...", main_process_only=True)
+                self.logger.info("Loading best model for testing...", main_process_only=self.accelerator.is_main_process)
                 self.load_ckpt(self.best_ckpt_path)
 
                 
 
             if isinstance(self.test_sampler, DistributedSampler):
                 self.test_sampler.set_epoch(0)
-                self.logger.info(f"Setting epoch for Test DistSampler, rank: {self.accelerator.process_index}/{self.world_size}", main_process_only=True)
+                self.logger.info(f"Setting epoch for Test DistSampler, rank: {self.accelerator.process_index}/{self.world_size}", main_process_only=self.accelerator.is_main_process)
             else:
                 self.logger.warning(f"Test loader sampler is not DistSampler, skipping epoch setting, rank: {self.accelerator.process_index}")
-            self.logger.info("Evaluating on test set...", main_process_only=True)
+            self.logger.info("Evaluating on test set...", main_process_only=self.accelerator.is_main_process)
 
             test_metrics = self.evaluate(self.test_loader, epoch=0, mode='test')
 
@@ -699,17 +736,17 @@ class UniSignTrans:
                     f.write(f"BLEU-2: {test_metrics['bleu_2']:.4f}\n")
                     f.write(f"BLEU-3: {test_metrics['bleu_3']:.4f}\n")
                     f.write(f"BLEU-4: {test_metrics['bleu_4']:.4f}\n")
-            self.logger.info(f"Test results saved to: {test_results_filepath}", main_process_only=True)
+            self.logger.info(f"Test results saved to: {test_results_filepath}", main_process_only=self.accelerator.is_main_process)
             self.logger.info(
                 f"Test Loss: {test_metrics['loss']:.4f}, "
                 f"BLEU-1: {test_metrics['bleu_1']:.4f}, "
                 f"BLEU-2: {test_metrics['bleu_2']:.4f}, "
                 f"BLEU-3: {test_metrics['bleu_3']:.4f}, "
                 f"BLEU-4: {test_metrics['bleu_4']:.4f}",
-                main_process_only=True
+                main_process_only=self.accelerator.is_main_process
             )
 
-        self.logger.info("Done!", main_process_only=True)
+        self.logger.info("Done!", main_process_only=self.accelerator.is_main_process)
         self.cleanup()
 
     def save_ckpt(self, epoch, ckpt_path):
@@ -726,7 +763,7 @@ class UniSignTrans:
             'best_loss': self.best_loss,
         }
         torch.save(model_dict, ckpt_path)
-        self.logger.info(f'Saving model to: {ckpt_path}', main_process_only=True)
+        self.logger.info(f'Saving model to: {ckpt_path}', main_process_only=self.accelerator.is_main_process)
 
     def load_ckpt_after_acceleratorPrepare(self, ckpt_path):
         # --- 1. 主进程加载 checkpoint dict ---
@@ -750,14 +787,14 @@ class UniSignTrans:
                 ckpt_dict['UniSignModel'], strict=False)
 
         if missing_keys or unexpected_keys:
-            self.logger.warning(f"UniSignModel - Missing keys: {missing_keys}, Unexpected keys: {unexpected_keys}", main_process_only=True)
+            self.logger.warning(f"UniSignModel - Missing keys: {missing_keys}, Unexpected keys: {unexpected_keys}", main_process_only=self.accelerator.is_main_process)
 
         # --- 4. 所有进程都加载 feature_encoder（非DDP，需要每个进程同步加载） ---
         if self.use_feature_encoder:
             missing_keys, unexpected_keys = self.feature_encoder.load_state_dict(
                 ckpt_dict['encoder'], strict=False)
             if missing_keys or unexpected_keys:
-                self.logger.warning(f"Feature encoder - Missing keys: {missing_keys}, Unexpected keys: {unexpected_keys}", main_process_only=True)
+                self.logger.warning(f"Feature encoder - Missing keys: {missing_keys}, Unexpected keys: {unexpected_keys}", main_process_only=self.accelerator.is_main_process)
 
         # --- 5. 构建并广播 optimizer 状态（主进程构建） ---
         if self.accelerator.is_main_process and not self.finetune:
@@ -785,8 +822,8 @@ class UniSignTrans:
         self.start_epoch = optimizer_states['start_epoch']
         self.best_loss = optimizer_states['best_loss']
 
-        self.logger.info(f"Start epoch: {self.start_epoch}", main_process_only=True)
-        self.logger.info(f"Best loss: {self.best_loss}", main_process_only=True)
+        self.logger.info(f"Start epoch: {self.start_epoch}", main_process_only=self.accelerator.is_main_process)
+        self.logger.info(f"Best loss: {self.best_loss}", main_process_only=self.accelerator.is_main_process)
 
         self.accelerator.wait_for_everyone()
 
