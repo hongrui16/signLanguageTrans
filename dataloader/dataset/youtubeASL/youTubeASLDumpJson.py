@@ -17,7 +17,34 @@ if __name__ == '__main__':
 
 from utils.mediapipe_kpts_mapping import MediapipeKptsMapping
 
-class YouTubeASLOnlineDet(Dataset):
+
+def filter_out_to_do_list():
+    already_processed_list = '/projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_anno_all_filepaths.txt'
+    to_be_processed_list = 'to_be_processed_clips.txt'
+    ## read already processed list
+    processed_clip_ids = []
+    if os.path.exists(already_processed_list):
+        with open(already_processed_list, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                filename = os.path.basename(line)  # youtubeASL_Clip00000047_anno.json
+                # 提取中间的数字部分
+                processed_id = filename.split('_')[1].replace('Clip', '')  # '00000047'
+                processed_clip_ids.append(int(processed_id))
+
+    processed_clip_ids = set(processed_clip_ids)  # 去重
+    to_be_processed_ids = set(range(0, 652092)) - processed_clip_ids  # youtube-asl总共有 652092 个 clip_id
+    ## read to be processed list
+    with open(to_be_processed_list, 'w') as f:
+        ## write clip_ids to to_be_processed_list.txt
+        for clip_id in to_be_processed_ids:
+            f.write(f"{clip_id}\n")
+
+
+
+class youTubeASLDumpJson:
     def __init__(self, video_dir: str = None, num_frames_per_clip: int = 150, target_img_size = (224, 224), debug = False, return_frame = False):
         """
         Initialize the YouTube ASL dataset loader for a single video and VTT files.
@@ -35,16 +62,29 @@ class YouTubeASLOnlineDet(Dataset):
         self.debug = debug
         self.return_frame = return_frame  # 是否返回frame
 
+        print('loading YOLOv8 model...')
         self.yolo_model = YOLO('yolov8n.pt')
-        self.yolo_model.fuse()  # Fuse model for faster inference
+        
+        # self.yolo_model.fuse()  # Fuse model for faster inference
 
-
+        print('finished loading YOLOv8 model')
         self.keypoints_threshold = 0.35  # Confidence threshold for keypoint detection
         self.anno_file = '/projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_annotation.txt'
-
-        self.anno_data = self.parse_annotation(self.anno_file)
         
+        self.to_be_processed_list = 'to_be_processed_clips.txt'
+        
+        self.anno_data = self.parse_annotation(self.anno_file)
         print(f"Total clips in dataset: {len(self.anno_data)}")
+        
+        if os.path.exists(self.to_be_processed_list):
+            with open(self.to_be_processed_list, 'r') as f:
+                self.to_be_processed_ids = [int(line.strip()) for line in f if line.strip().isdigit()]
+        else:
+            self.to_be_processed_ids = list(range(0, len(self.anno_data)))  # YouTube ASL has 652092 clips
+            
+        print(f"Total clips to be processed: {len(self.to_be_processed_ids)}")
+        
+    
 
         # # Find video and VTT files
         # self.video_transcript_pairs = self._find_files()
@@ -216,9 +256,7 @@ class YouTubeASLOnlineDet(Dataset):
 
         return hand_keypoints, body_keypoints, face_keypoints
 
-    def __len__(self) -> int:
-        """Return the total number of clips in the dataset."""
-        return len(self.anno_data)
+
 
     def iou_filter(self, left_hand_bboxes, right_hand_bboxes, threshold=0.9):
         '''
@@ -522,15 +560,17 @@ class YouTubeASLOnlineDet(Dataset):
         anno_json = {}
         end_idx = len(self.anno_data) if end_idx is None else end_idx
         cnt_clip = 0
-
-        for idx in range(start_idx, end_idx):
+        
+        to_be_processed_ids = self.to_be_processed_ids[start_idx:end_idx]
+        
+        for i, idx in enumerate(to_be_processed_ids):
             clip_info_dict = {}
             clip_id = f'{idx:08d}'
 
             video_name, vtt_name, timestamp, text = self.anno_data[idx]
             video_name_prefix = video_name.split('.')[0]
 
-            print(f"Processing clip {video_name} {idx}/{end_idx}")
+            print(f"Processing clip {video_name} {i}/{len(to_be_processed_ids)}")
 
             start_time, end_time = timestamp.split(' --> ')
             # print(f"Processing video {video_name}, text: {text}, start: {start_time}, end: {end_time}")
@@ -553,9 +593,10 @@ class YouTubeASLOnlineDet(Dataset):
             # Sample frames with hand filtering
             filtered_frames, filtered_frames_index, \
             filtered_hand_kpts_list, body_bbox, original_frame_num = self.fine_sample_frames_with_filter(video_path, start_time, 
-                                                                                           end_time, drop_last, print_flag=False)
+                                                                                           end_time, drop_last, print_flag=True)
 
             if filtered_frames is None or len(filtered_frames) == 0:
+                print(f"Warning: No valid frames found in {video_name} for clip {clip_id}.")
                 continue
             
             filtered_left_hand_kpts_list, filtered_right_hand_kpts_list = filtered_hand_kpts_list
@@ -699,9 +740,10 @@ def main_dump_anno_json(args):
         num_frames_per_clip = 150
     else:
         num_frames_per_clip = 150
-    dataset = YouTubeASLOnlineDet(num_frames_per_clip = num_frames_per_clip, debug=debug)
-    print(f"Total clips in dataset: {len(dataset)}")
-    
+    print(f"Debug mode: {debug}, num_frames_per_clip: {num_frames_per_clip}")
+    dataset = youTubeASLDumpJson(num_frames_per_clip = num_frames_per_clip, debug=debug)
+
+    print(f"Dataset initialized with {len(dataset.anno_data)} clips to process.")
     
     if debug:
         save_img_dir = 'temp/frames'
@@ -710,8 +752,10 @@ def main_dump_anno_json(args):
     else:
         # save_img_dir = '/projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_frames'
         # save_anno_dir = '/projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_anno'
-        save_img_dir = '/scratch/rhong5/dataset/youtubeASL_frame_pose_0602/youtubeASL_frames'
-        save_anno_dir = '/scratch/rhong5/dataset/youtubeASL_frame_pose_0602/youtubeASL_anno'
+        # save_img_dir = '/scratch/rhong5/dataset/youtubeASL_frame_pose_0602/youtubeASL_frames'
+        # save_anno_dir = '/scratch/rhong5/dataset/youtubeASL_frame_pose_0602/youtubeASL_anno'
+        save_img_dir = '/scratch/rhong5/dataset/youtubeASL_frame_pose_0614/youtubeASL_frames'
+        save_anno_dir = '/scratch/rhong5/dataset/youtubeASL_frame_pose_0614/youtubeASL_anno'
 
     os.makedirs(save_img_dir, exist_ok=True)
     os.makedirs(save_anno_dir, exist_ok=True)
@@ -736,5 +780,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     # main_sample_examples()
     main_dump_anno_json(args)
+    # youTubeASLDumpJson()
+    
 
 # Example output:
