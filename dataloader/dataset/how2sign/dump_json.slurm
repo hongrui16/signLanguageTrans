@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #SBATCH --partition=normal                    
-#SBATCH --job-name=unzip                   
+#SBATCH --job-name=dumpjson                   
 #SBATCH --output=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/how2sign/zlog/%x-%N-%j.out  
 #SBATCH --error=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/how2sign/zlog/%x-%N-%j.err   
 #SBATCH --nodes=1
@@ -24,13 +24,9 @@ module load python
 
 source /home/rhong5/py310Torch/bin/activate
 
-# cd /projects/kosecka/hongrui/dataset/how2sign/video_zipfiles/
-
-# cat train_raw_videos.z* > /scratch/rhong5/dataset/how2sign/video_level/train/train_raw_videos_all.zip
-
 cd /home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/how2sign
 
-python unzip_py.py
+python how2signDumpJson.py
 # rm train_raw_videos_all.zip
 
 # torchrun --nnodes=${NUM_NODES} --nproc_per_node=${GPUS_PER_NODE} train_VAE.py --debug 
