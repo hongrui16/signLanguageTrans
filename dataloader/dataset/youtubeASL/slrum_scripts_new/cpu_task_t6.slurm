@@ -28,7 +28,7 @@ source /home/rhong5/py310Torch/bin/activate
 cd /home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/youtubeASL
 
 ### originally, start_idx was 227885, and end_idx was 298585
-python youTubeASLDumpJson.py --start_idx 103974 --end_idx 124769
+python process_frames_dump_annos_v2.py --start_idx 103974 --end_idx 124769
 
 
 # torchrun --nnodes=${NUM_NODES} --nproc_per_node=${GPUS_PER_NODE} train_VAE.py --debug 

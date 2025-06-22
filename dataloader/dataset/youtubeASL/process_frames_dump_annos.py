@@ -362,6 +362,8 @@ class youTubeASLDumpJson:
         cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
         det_body_bbox = True
 
+        max_det_frames = len(frame_indices)//3
+        
         for m, fid in enumerate(frame_indices):
             cap.set(cv2.CAP_PROP_POS_FRAMES, fid)
             ret, frame = cap.read()
@@ -384,8 +386,11 @@ class youTubeASLDumpJson:
                 if len(person_bboxes) != 1:
                     if print_flag:
                         print(f"Skip {video_path}: detected {len(person_bboxes)} persons.")
-                    cap.release()
-                    return None, None, None, None, None
+                    
+                    if m > max_det_frames:
+                        cap.release()
+                        return None, None, None, None, None
+                    continue
                 
                 # 单人，使用其 bbox
                 body_xmin, body_ymin, body_xmax, body_ymax = [int(v) for v in person_bboxes[0]]
@@ -401,8 +406,11 @@ class youTubeASLDumpJson:
                 if body_w * body_h < 0.01 * w * h:
                     if print_flag:
                         print(f"Skip {video_path}: person bbox too small.")
-                    cap.release()
-                    return None, None, None, None, None
+                        
+                    if m > max_det_frames:
+                        cap.release()
+                        return None, None, None, None, None
+                    continue
 
                 body_bbox = [body_xmin, body_ymin, body_xmax, body_ymax]
                 det_body_bbox = False

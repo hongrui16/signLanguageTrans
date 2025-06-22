@@ -44,8 +44,8 @@ def filter_out_to_do_list():
 
 
 
-class how2signDumpJson:
-    def __init__(self, root_dir: str = None, split = 'test', num_frames_per_clip: int = 150, debug = False, return_frame = False):
+class youTubeASLDumpJson:
+    def __init__(self, video_dir: str = None, num_frames_per_clip: int = 150, target_img_size = (224, 224), debug = False, return_frame = False):
         """
         Initialize the YouTube ASL dataset loader for a single video and VTT files.
         
@@ -54,38 +54,33 @@ class how2signDumpJson:
             num_frames_per_clip (int): Number of frames to sample per clip (default: 16).
             frame_sample_rate (int): Frames per second to sample from the video (default: 30 FPS).
         """
-        self.root_dir = root_dir if root_dir is not None else f'/scratch/rhong5/dataset/how2sign/'
-        self.video_dir = os.path.join(f'{self.root_dir}', f'video_level/{split}/rgb_front/raw_videos') 
-        if not os.path.exists(self.root_dir):
-            raise FileNotFoundError(f"Directory not found: {self.root_dir}")
-        
+        self.video_dir = video_dir if video_dir is not None else '/projects/kosecka/hongrui/dataset/youtubeASL/youtube_ASL/'
         if not os.path.exists(self.video_dir):
-            raise FileNotFoundError(f"Video directory not found: {self.video_dir}")
-        
+            raise FileNotFoundError(f"Directory not found: {self.video_dir}")
         self.num_frames_per_clip = num_frames_per_clip
-
+        self.target_img_size = target_img_size
         self.debug = debug
         self.return_frame = return_frame  # 是否返回frame
 
         print('loading YOLOv8 model...')
-        self.yolo_model = YOLO('/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/youtubeASL/yolov8n.pt')
+        self.yolo_model = YOLO('yolov8n.pt')
         
         # self.yolo_model.fuse()  # Fuse model for faster inference
 
         print('finished loading YOLOv8 model')
         self.keypoints_threshold = 0.35  # Confidence threshold for keypoint detection
-        self.anno_file = f'/projects/kosecka/hongrui/dataset/how2sign/re-aligned_how2sign_realigned_{split}.txt'
+        self.anno_file = '/projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_annotation.txt'
         
         self.to_be_processed_list = 'to_be_processed_clips.txt'
         
-        self.anno_info_lists = self.parse_annotation(self.anno_file)
-        print(f"Total clips in dataset: {len(self.anno_info_lists)}")
+        self.anno_data = self.parse_annotation(self.anno_file)
+        print(f"Total clips in dataset: {len(self.anno_data)}")
         
         if os.path.exists(self.to_be_processed_list):
             with open(self.to_be_processed_list, 'r') as f:
                 self.to_be_processed_ids = [int(line.strip()) for line in f if line.strip().isdigit()]
         else:
-            self.to_be_processed_ids = list(range(0, len(self.anno_info_lists)))  # YouTube ASL has 652092 clips
+            self.to_be_processed_ids = list(range(0, len(self.anno_data)))  # YouTube ASL has 652092 clips
             
         print(f"Total clips to be processed: {len(self.to_be_processed_ids)}")
         
@@ -110,19 +105,18 @@ class how2signDumpJson:
         self.face_indices = [value for key, value in self.face_mapping.items()]
     
     def parse_annotation(self, anno_file):
-        lines = []
-        with open(anno_file, "r", encoding="utf-8") as f:
-            for line in f:
-                fields = line.strip().split("\t")  # 去除换行并按 tab 分割
-                lines.append(fields)
+        with open(anno_file, 'r') as f:
+            lines = f.readlines()
+        
+        anno_data = []
+        for line in lines:
+            video_name, vtt_name, timestamp, text = line.strip().split('||')
+            anno_data.append((video_name, vtt_name, timestamp, text))
+        
+        if self.debug:
+            anno_data = anno_data[:200]
 
-        # 示例输出：
-        # [
-        #   ['-g0iPSnQt6w-1-rgb_front', '01', '7.97', '13.83', "I'm an expert on diving, talking about a back 1 1/2 pike."],
-        #   ...
-        # ]
-
-        return lines
+        return anno_data
 
     def _find_files(self) -> List[Tuple[str, str]]:
         """
@@ -181,8 +175,10 @@ class how2signDumpJson:
         Returns:
             Float representing seconds.
         """
-        time_senconds = float(time_str)
-        return time_senconds
+        hours, minutes, seconds = time_str.split(':')
+        seconds, milliseconds = seconds.split('.')
+        total_seconds = (int(hours) * 3600 + int(minutes) * 60 + int(seconds) + int(milliseconds) / 1000)
+        return total_seconds
 
 
     def _detect_keypoints(self, frame_rgb: np.ndarray, frame_id: str = None, det_hand_kpts: bool = True) -> Tuple[Optional[List], Optional[List], Optional[List]]:
@@ -368,10 +364,14 @@ class how2signDumpJson:
 
         max_det_frames = len(frame_indices)//3
         
-        for m, fid in enumerate(frame_indices):
+        cnt = 0
+        while cnt < len(frame_indices):
+            fid = frame_indices[cnt]
+        
             cap.set(cv2.CAP_PROP_POS_FRAMES, fid)
             ret, frame = cap.read()
             if not ret:
+                cnt += 1
                 continue
 
             if det_body_bbox:                        
@@ -388,10 +388,11 @@ class how2signDumpJson:
                 
                 # 若多人，跳过 clip
                 if len(person_bboxes) != 1:
+                    cnt += 10
                     if print_flag:
                         print(f"Skip {video_path}: detected {len(person_bboxes)} persons.")
                     
-                    if m > max_det_frames:
+                    if cnt > max_det_frames:
                         cap.release()
                         return None, None, None, None, None
                     continue
@@ -408,10 +409,11 @@ class how2signDumpJson:
                 body_h = body_ymax - body_ymin
 
                 if body_w * body_h < 0.01 * w * h:
+                    cnt += 10
                     if print_flag:
                         print(f"Skip {video_path}: person bbox too small.")
                         
-                    if m > max_det_frames:
+                    if cnt > max_det_frames:
                         cap.release()
                         return None, None, None, None, None
                     continue
@@ -500,7 +502,9 @@ class how2signDumpJson:
                 right_hand_kpts_list.append(right_hand_keypoints)
                 left_hand_bboxes.append([left_xmin, left_ymin, left_xmax, left_ymax])
                 right_hand_bboxes.append([right_xmin, right_ymin, right_xmax, right_ymax])
-                
+            
+            cnt += 1
+            
         cap.release()
 
         # print(f'frame_index:', frame_index)
@@ -569,8 +573,8 @@ class how2signDumpJson:
         # self.mp_face_mesh = mp.solutions.face_mesh.FaceMesh(static_image_mode=False, min_detection_confidence=self.keypoints_threshold)
         os.makedirs(save_img_dir, exist_ok=True)
         os.makedirs(save_json_dir, exist_ok=True)
-
-        end_idx = len(self.anno_info_lists) if end_idx is None else end_idx
+        anno_json = {}
+        end_idx = len(self.anno_data) if end_idx is None else end_idx
         cnt_clip = 0
         
         to_be_processed_ids = self.to_be_processed_ids[start_idx:end_idx]
@@ -579,12 +583,12 @@ class how2signDumpJson:
             clip_info_dict = {}
             clip_id = f'{idx:08d}'
 
-            video_name_prefix, scentence_id, start_time, end_time, text = self.anno_info_lists[idx]
-            video_name = f'{video_name_prefix}.mp4'
+            video_name, vtt_name, timestamp, text = self.anno_data[idx]
+            video_name_prefix = video_name.split('.')[0]
 
-            print(f"Processing clip {video_name} {i}/{len(to_be_processed_ids)}")
+            print(f"Processing clip {video_name} {i + start_idx}/{end_idx}")
 
-
+            start_time, end_time = timestamp.split(' --> ')
             # print(f"Processing video {video_name}, text: {text}, start: {start_time}, end: {end_time}")
 
             start_time = self._time_to_seconds(start_time)
@@ -614,6 +618,8 @@ class how2signDumpJson:
             filtered_left_hand_kpts_list, filtered_right_hand_kpts_list = filtered_hand_kpts_list
             # print(f"Sampled frames: {len(filtered_frames)}, {filtered_frames_index}")
         
+
+            
             
             height, width, _ = filtered_frames[0].shape
 
@@ -630,14 +636,11 @@ class how2signDumpJson:
             
             body_xmin, body_ymin, body_xmax, body_ymax = body_bbox
             # Process each frame for keypoints
-            new_video_frames = []
             for i, frame_rgb in enumerate(filtered_frames):
                 frame_info_dict = {}
                 frame_id = filtered_frames_index[i]
-                formated_frame_id = f'{frame_id:06d}'
-                new_frame_id = f'{i:06d}'
-                
-                frame_name = new_frame_id
+                formated_frame_id = f'{frame_id:08d}'
+                frame_name = f'{video_name_prefix}_C{clip_id}_fid_{formated_frame_id}.jpg'
                 
                 ori_h, ori_w, _ = frame_rgb.shape
                 body_rgb = frame_rgb[body_ymin:body_ymax, body_xmin:body_xmax].copy()
@@ -663,15 +666,12 @@ class how2signDumpJson:
                 # print('len(face_kp):', len(face_kp))
                 # print('hand_kp:', hand_kp)
                 hand_kp = filtered_right_hand_kpts_list[i] + filtered_left_hand_kpts_list[i]
-                # cv2.imwrite(f'{save_img_dir}/{frame_name}', frame_rgb[:,:,::-1])
-                new_video_frames.append(frame_rgb[:,:,::-1])  # Convert RGB to BGR for saving
-                
+                cv2.imwrite(f'{save_img_dir}/{frame_name}', frame_rgb[:,:,::-1])
                 # print(f"    Saved frame {self.video_dir}/{frame_name}")
                 # cv2.imwrite(f'output/{frame_name}', frame_rgb[:,:,::-1])
                 frame_info_dict['hand'] = hand_kp
                 frame_info_dict['body'] = body_kp
                 frame_info_dict['face'] = face_kp
-                frame_info_dict['original_frame_id'] = formated_frame_id
                 # frame_info_dict['frame_name'] = frame_name
                 clip_info_dict['keyframes'][frame_name] = frame_info_dict
                 # print()
@@ -683,7 +683,7 @@ class how2signDumpJson:
             #     break
             
             import json
-            json_filepath = os.path.join(save_json_dir, f'{video_name_prefix}_SID{scentence_id}_anno.json')
+            json_filepath = os.path.join(save_json_dir, f'youtubeASL_Clip{clip_id}_anno.json')
             # json_filepath = 'youtubeASL_anno.json'
             if os.path.exists(json_filepath):
                 try:
@@ -693,21 +693,9 @@ class how2signDumpJson:
             
             with open(json_filepath, 'w') as f:
                 json.dump(clip_info_dict, f, indent=4, ensure_ascii=False)
-                
-            height, width, _ = new_video_frames[0].shape
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            fps = 3
-            output_path = os.path.join(save_img_dir,  f'{video_name_prefix}_SID{scentence_id}_frames.mp4')
-            writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-
-            for frame in new_video_frames:
-                writer.write(frame)  # 确保 frame 是 BGR 格式
-            writer.release()
-            print(f"✅ 成功保存视频到: {output_path}")
-
 
             cnt_clip += 1
-            if self.debug and cnt_clip >= 3:
+            if self.debug and cnt_clip >= 10:
                 break
 
     def parse_json_visualize(self, frame_dir='youtubeASL_frames', anno_json_dir = 'youtubeASL_anno', output_dir='output'):
@@ -725,33 +713,16 @@ class how2signDumpJson:
         with open(json_filepath, 'r') as f:
             anno_data = json.load(f)
 
-        video_path = json_filepath.replace('_anno.json', '_frames.mp4')
-        video_path = video_path.replace(anno_json_dir, frame_dir)
-        print(f"Visualizing keypoints for video: {video_path}")
-        
-        ## read all frames from video
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            print(f"Error opening video {video_path}")
-            return
-        frames = []
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            frames.append(frame)
-        cap.release()
-        print(f"Total frames in video: {len(frames)}")
-        
         os.makedirs(output_dir, exist_ok=True)
 
         cnt = 0
         for frame_name, frame_info in anno_data['keyframes'].items():
-            
-            #
-            frame_id = int(frame_name)
-            new_frame_name = f'{frame_name}.jpg'
-            frame = frames[frame_id]
+            frame_path = os.path.join(frame_dir, frame_name)
+            frame = cv2.imread(frame_path)
+            if frame is None:
+                print(f"Warning: Frame {frame_path} not found.")
+                continue
+
             # print('frame_rgb.shape:', frame_rgb.shape)
             # print(f'frame_rgb.dtype:', frame_rgb.dtype)
             hand_kp = frame_info['hand']
@@ -770,7 +741,7 @@ class how2signDumpJson:
                 if x > 0 and y > 0:
                     cv2.circle(frame, (int(x * w), int(y * h)), 1, (0, 0, 255), -1)
             
-            cv2.imwrite(f'{output_dir}/{new_frame_name}', frame)
+            cv2.imwrite(f'{output_dir}/{frame_name}', frame)
             cnt += 1
             if cnt > 5:
                 break
@@ -781,34 +752,29 @@ class how2signDumpJson:
                 
 def main_dump_anno_json(args):
     debug = args.debug
-    split = args.split if hasattr(args, 'split') else 'train'
-    print(f"Running in debug mode: {debug}, split: {split}")
-    
-    
     if debug:
         num_frames_per_clip = 150
     else:
         num_frames_per_clip = 150
     print(f"Debug mode: {debug}, num_frames_per_clip: {num_frames_per_clip}")
-    dataset = how2signDumpJson(split = split, num_frames_per_clip = num_frames_per_clip, debug=debug)
+    dataset = youTubeASLDumpJson(num_frames_per_clip = num_frames_per_clip, debug=debug)
 
+    print(f"Dataset initialized with {len(dataset.anno_data)} clips to process.")
     
     if debug:
-        save_img_dir = f'temp/{split}/frames'
-        save_anno_dir = f'temp/{split}/annos'
-        output_dir = 'temp/output2'
-        os.makedirs(output_dir, exist_ok=True)
+        save_img_dir = 'temp/frames'
+        save_anno_dir = 'temp/anno'
+        output_dir = 'temp/output'
     else:
         # save_img_dir = '/projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_frames'
         # save_anno_dir = '/projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_anno'
         # save_img_dir = '/scratch/rhong5/dataset/youtubeASL_frame_pose_0602/youtubeASL_frames'
         # save_anno_dir = '/scratch/rhong5/dataset/youtubeASL_frame_pose_0602/youtubeASL_anno'
-        save_img_dir = f'/projects/kosecka/hongrui/dataset/how2sign/processed_0615/{split}/frames'
-        save_anno_dir = f'/projects/kosecka/hongrui/dataset/how2sign/processed_0615/{split}/annos'
+        save_img_dir = '/scratch/rhong5/dataset/youtubeASL_frame_pose_0614/youtubeASL_frames'
+        save_anno_dir = '/scratch/rhong5/dataset/youtubeASL_frame_pose_0614/youtubeASL_anno'
 
     os.makedirs(save_img_dir, exist_ok=True)
     os.makedirs(save_anno_dir, exist_ok=True)
-    
 
     dataset.dump_anno(save_img_dir, save_anno_dir, start_idx=args.start_idx, end_idx=args.end_idx)
     print("Dumped annotation data to JSON file.")
@@ -827,7 +793,6 @@ if __name__ == '__main__':
     parser.add_argument('--start_idx', type=int, default=0, help='Start index of the dataset')
     parser.add_argument('--end_idx', type=int, default=None, help='End index of the dataset')
     parser.add_argument('--debug', action='store_true', help='Enable debug mode for limited dataset size')
-    parser.add_argument('--split', type=str, default='test', help='Dataset split to process (train/val/test)')
     args = parser.parse_args()
     # main_sample_examples()
     main_dump_anno_json(args)

@@ -31,8 +31,8 @@ def extract_frame_id(filename):
     match = re.search(r'_(\d+)_keypoints\.json$', filename)
     return int(match.group(1)) if match else -1
 
-class How2SignDataset(Dataset):
-    def __init__(self, sentence_csv_path, kpts_json_dir, video_dir, n_frames=15, debug=False):
+class How2SignOpenPose(Dataset):
+    def __init__(self, sentence_csv_path, kpts_json_dir, video_dir, n_frames=15, debug=False, **kwargs):
         self.debug = debug
         self.sentence_csv = pd.read_csv(sentence_csv_path, sep='\t' if '\t' in open(sentence_csv_path).readline() else ',')
         

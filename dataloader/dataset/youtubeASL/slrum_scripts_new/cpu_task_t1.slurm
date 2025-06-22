@@ -27,7 +27,7 @@ source /home/rhong5/py310Torch/bin/activate
 cd /home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/youtubeASL
 
 
-python youTubeASLDumpJson.py --start_idx 0 --end_idx 20794
+python process_frames_dump_annos_v2.py --start_idx 780 --end_idx 20794
 
 
 # torchrun --nnodes=${NUM_NODES} --nproc_per_node=${GPUS_PER_NODE} train_VAE.py --debug 

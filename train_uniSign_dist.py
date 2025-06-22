@@ -63,8 +63,14 @@ class UniSignTrans:
         self.modality = args.modality
         self.finetune = args.finetune
         self.n_frames = args.n_frames
-        self.batch_size = args.batch_size
-        self.use_feature_encoder = args.use_feature_encoder
+        self.train_batch_size  = args.train_batch_size
+        
+        assert self.modality in ['pose', 'rgb', 'pose_rgb'], f"Unsupported modality: {self.modality}"
+        
+        if self.modality == 'pose':
+            self.use_feature_encoder = False
+        else:
+            self.use_feature_encoder = True 
 
         time_stamp = kwargs.get('time_stamp', datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
         slurm_job_id = kwargs.get('slurm_job_id', os.environ.get('SLURM_JOB_ID', '0'))
@@ -139,28 +145,55 @@ class UniSignTrans:
 
         self.logger.info(f"Dataset name: {self.dataset_name}", main_process_only=self.accelerator.is_main_process)
 
-        self.train_batch_size = self.batch_size
         if self.debug:
             self.train_batch_size = 5
         self.logger.info(f"Train batch size: {self.train_batch_size}", main_process_only=self.accelerator.is_main_process)
 
         self.logger.info("Dataloader configuration.", main_process_only=self.accelerator.is_main_process)
-        train_loader, val_loader, test_loader, \
-        train_dataset,val_dataset, test_dataset, \
-        self.train_sampler, self.val_sampler, self.test_sampler  = get_dataloader(
+
+        distributed = True if self.accelerator.num_processes > 1 else False
+        self.distributed = distributed
+        self.logger.info(f"Distributed: {distributed}", main_process_only=self.accelerator.is_main_process)
+
+        train_loader, train_dataset, self.train_sampler  = get_dataloader(
             dataset_name=self.dataset_name,
             logger=self.logger,
             debug=self.debug,
-            train_batch_size=self.train_batch_size,
-            val_batch_size=self.train_batch_size,
-            test_batch_size=self.train_batch_size,
+            batch_size=self.train_batch_size,
             modality=self.modality,
             n_frames=self.n_frames,
-            distributed=True,
+            distributed=distributed,
             world_size=self.accelerator.num_processes,
-            rank=self.accelerator.process_index
+            rank=self.accelerator.process_index,
+            split = 'train',
         )
-
+        
+        val_loader, val_dataset, self.val_sampler = get_dataloader(
+            dataset_name=self.dataset_name,
+            logger=self.logger,
+            debug=self.debug,
+            batch_size=self.train_batch_size,
+            modality=self.modality,
+            n_frames=self.n_frames,
+            distributed=distributed,
+            world_size=self.accelerator.num_processes,
+            rank=self.accelerator.process_index,
+            split = 'val',
+        )
+        
+        test_loader, test_dataset, self.test_sampler = get_dataloader(
+            dataset_name=self.dataset_name,
+            logger=self.logger,
+            debug=self.debug,
+            batch_size=self.train_batch_size,
+            modality=self.modality,
+            n_frames=self.n_frames,
+            distributed=distributed,
+            world_size=self.accelerator.num_processes,
+            rank=self.accelerator.process_index,
+            split = 'test',
+        )
+        
         if isinstance(train_loader.sampler, DistributedSampler):
             self.logger.info("Train loader correctly uses DistributedSampler", main_process_only=self.accelerator.is_main_process)
         else:
@@ -205,7 +238,7 @@ class UniSignTrans:
                 self.logger.info(f"frames_tensor Shape: {frames_tensor.shape}", main_process_only=self.accelerator.is_main_process)
             break
 
-        if 'rgb' in self.modality.lower() and self.use_feature_encoder:
+        if self.use_feature_encoder:
             self.feature_encoder, encoder_output_size = get_encoder(self.feature_encoder_name, self.device)
             
         else:
@@ -437,11 +470,18 @@ class UniSignTrans:
                 )['input_ids'].to(self.device)
 
                 encoder_outputs = (encoder_hidden,)
-                outputs = self.UniSignModel.module.llm_trans.model(
-                    encoder_outputs=encoder_outputs,
-                    decoder_input_ids=generated_ids,
-                    return_dict=True
-                )
+                if self.distributed:
+                    outputs = self.UniSignModel.module.llm_trans.model(
+                        encoder_outputs=encoder_outputs,
+                        decoder_input_ids=generated_ids,
+                        return_dict=True
+                    )
+                else:
+                    outputs = self.UniSignModel.llm_trans.model(
+                        encoder_outputs=encoder_outputs,
+                        decoder_input_ids=generated_ids,
+                        return_dict=True
+                    )
                 logits = outputs.logits
 
                 loss = self.compute_translation_loss(targets, logits)
@@ -843,8 +883,7 @@ def get_args():
     parser.add_argument("--modality", type=str, default=arg_settings["modality"], help="Modality, e.g., rgb, pose, rgb_pose")
     parser.add_argument("--finetune", default=arg_settings["finetune"], action="store_true", help="Fine-tune the model")
     parser.add_argument("--n_frames", type=int, default=arg_settings["n_frames"], help="Number of frames")
-    parser.add_argument("--batch_size", type=int, default=arg_settings["batch_size"], help="Batch size")
-    parser.add_argument("--use_feature_encoder", default=arg_settings["use_feature_encoder"], action="store_true", help="Use feature encoder")
+    parser.add_argument("--train_batch_size", type=int, default=arg_settings["train_batch_size"], help="Batch size")
     return parser.parse_args()
 
 if __name__ == '__main__':

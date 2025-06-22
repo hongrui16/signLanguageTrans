@@ -20,6 +20,7 @@ class SignLanguageLLM(nn.Module):
         # Linear layer to map 4C -> LLM embedding dim
         self.fc = nn.Linear(1024, self.model.config.hidden_size)  # hidden_size = 1024 for mbart-large-50
         self.norm = nn.LayerNorm(self.model.config.hidden_size)  # 添加归一化
+        self.decoder_start_token_id = self.tokenizer.lang_code_to_id["en_XX"]
         print(f"Model vocab size: {self.model.config.vocab_size}")
         print(f"Tokenizer vocab size: {self.tokenizer.vocab_size}")
 
@@ -37,6 +38,9 @@ class SignLanguageLLM(nn.Module):
                 - translated_text: List[str] - Translated sentence
                 - encoder_hidden: (batch_size, T, LLM_dim) - Encoder hidden representation
         """
+        
+        # print(f"sign_features mean: {sign_features.mean().item()}, std: {sign_features.std().item()}")
+
         batch_size, T, C = sign_features.shape
 
         # 1️ Project to LLM dimension
@@ -68,6 +72,7 @@ class SignLanguageLLM(nn.Module):
             else:
                 raise ValueError("decoder_input_ids must be provided in training mode")
         elif mode in ["val", "test"]:
+            # print("Inference mode: Generating translated text")
             input_length = encoder_outputs.last_hidden_state.shape[1]
             max_length = min(input_length * 2, 128)  # 限制最大长度，防止太长
 
@@ -76,7 +81,9 @@ class SignLanguageLLM(nn.Module):
                 encoder_outputs=encoder_outputs,  # Use encoder outputs instead of inputs_embeds
                 max_length=max_length,  # Adjust as needed
                 num_beams=5,    # Beam search for better quality
-                early_stopping=True
+                early_stopping=True,
+                decoder_start_token_id=self.decoder_start_token_id
+
             )
             translated_text = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
             return translated_text, encoder_hidden

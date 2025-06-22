@@ -27,7 +27,7 @@ cd /home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans
 
 # # Launch distributed training with accelerate
 accelerate launch --num_processes=2 --num_machines=1 --machine_rank=0 --main_process_ip=localhost --main_process_port=12345 \
-    uniSign_dist.py 2> >(grep -v "absl::InitializeLog" | grep -v "gl_context_egl.cc" | grep -v "gl_context.cc" >&2)
+    train_uniSign_dist.py 2> >(grep -v "absl::InitializeLog" | grep -v "gl_context_egl.cc" | grep -v "gl_context.cc" >&2)
 
 
 

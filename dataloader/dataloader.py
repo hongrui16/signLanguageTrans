@@ -12,29 +12,29 @@ from dataloader.dataset.youtubeASL.youtubeASL import YouTubeASL
 from dataloader.dataset.youtubeASL.youtubeASLFrames import YouTubeASLFrames
 from dataloader.dataset.youtubeASL.youTubeASLOnlineDet import YouTubeASLOnlineDet
 from dataloader.dataset.youtubeASL.youtubeASLFramesNaive import YouTubeASLFramesNaive
-from dataloader.dataset.how2sign.how2sign_openpose import How2SignDataset
-
+from dataloader.dataset.how2sign.how2sign_openpose import How2SignOpenPose
+from dataloader.dataset.how2sign.how2signNaive import How2SignNaive
 
 
 def get_dataloader(
-    dataset_name,
+    dataset_name = None,
     logger=None,
     debug=False,
     n_frames=30,
     distributed=False,
     world_size=1,
     rank=0,
+    split = 'train',
     **kwargs,
 ):
-    train_batch_size = kwargs.get('train_batch_size', 32)
-    val_batch_size = kwargs.get('val_batch_size', 32)
-    test_batch_size = kwargs.get('test_batch_size', 32)
+    batch_size = kwargs.get('batch_size', 32)
+    modality = kwargs.get('modality', 'pose')
 
     # Log distributed training configuration
     if logger is not None:
-        logger.info(f"Dataset: {dataset_name}, Distributed training: {distributed}, World size: {world_size}, Rank: {rank}", main_process_only=True)
+        logger.info(f"Dataset: {dataset_name}, Distributed {split}: {distributed}, World size: {world_size}, Rank: {rank}", main_process_only=True)
     else:
-        print(f"Dataset: {dataset_name}, Distributed training: {distributed}, World size: {world_size}, Rank: {rank}")
+        print(f"Dataset: {dataset_name}, Distributed {split}: {distributed}, World size: {world_size}, Rank: {rank}")
 
     # Adjust num_workers based on debug mode and distributed setup
     if debug:
@@ -42,187 +42,109 @@ def get_dataloader(
     else:
         num_workers = min(5, os.cpu_count() // world_size)  # Scale workers with available CPUs
 
-    if dataset_name in ['YouTubeASLFrames', 'YouTubeASLFramesNaive']:
+    if dataset_name in ['YouTubeASLFrames', 'YouTubeASLFramesNaive', 'YouTubeASLOnlineDet']:
+        # if not split == 'train':
+        #     if logger is not None:
+        #         logger.warning(f"Dataset {dataset_name} only supports 'train' split. Returning None for {split}.", main_process_only=True)
+        #     else:
+        #         print(f"Dataset {dataset_name} only supports 'train' split. Returning None for {split}.")
+        #     return None, None, None
+        
+
         data_dir = '/scratch/rhong5/dataset/youtube_ASL/'
         
         if dataset_name == 'YouTubeASLFramesNaive':
-            train_dataset = YouTubeASLFramesNaive(
+            dataset = YouTubeASLFramesNaive(
+                split = split,
                 debug=debug,
                 logger=logger,
+                modality=modality,
             )
-        else:
-            train_dataset = YouTubeASLFrames(
+        elif dataset_name == 'YouTubeASLFrames':
+            dataset = YouTubeASLFrames(
                 clip_frame_dir='/scratch/rhong5/dataset/youtubeASL_frames',
                 clip_anno_dir='/scratch/rhong5/dataset/youtubeASL_anno',
                 num_frames_per_clip=n_frames,
                 debug=debug,
                 logger=logger,
+                modality = modality,
             )
-
-        if logger is not None:
-            logger.info(f"Train dataset dir: {data_dir}; sample num: {len(train_dataset)}", main_process_only=True)
+        elif dataset_name == 'YouTubeASLOnlineDet':
+            video_dir = '/projects/kosecka/hongrui/dataset/youtubeASL/youtube_ASL/'
+            dataset = YouTubeASLOnlineDet(
+                video_dir = video_dir,
+                num_frames_per_clip=n_frames,
+                debug=debug,
+                modality = modality,
+            )
         else:
-            print(f"Train dataset dir: {data_dir}; sample num: {len(train_dataset)}")
-
-        # Use DistributedSampler for training if distributed=True
-        train_sampler = DistributedSampler(
-            train_dataset,
-            num_replicas=world_size,
-            rank=rank,
-            shuffle=True
-        ) if distributed else None
-
-        train_loader = DataLoader(
-            train_dataset,
-            batch_size=train_batch_size,
-            num_workers=num_workers,
-            shuffle=(train_sampler is None),
-            sampler=train_sampler,
-            drop_last=True,
-            pin_memory=True
-        )
-
-        # Log sampler type
-        if logger is not None:
-            logger.info(f"YouTubeASLFrames train sampler: {type(train_loader.sampler).__name__}", main_process_only=True)
-        else:
-            print(f"YouTubeASLFrames train sampler: {type(train_loader.sampler).__name__}")
-
-        val_loader = None
-        val_dataset = None
-        val_sampler = None
-        
-        test_loader = None
-        test_dataset = None
-        test_sampler = None
-
+            raise ValueError(f"Unsupported dataset: {dataset_name}")
     
-    elif dataset_name == 'YouTubeASLOnlineDet':
-        video_dir = '/projects/kosecka/hongrui/dataset/youtubeASL/youtube_ASL/'
-        train_dataset = YouTubeASLOnlineDet(
-            video_dir = video_dir,
-            num_frames_per_clip=n_frames,
-            debug=debug
-        )
+    elif dataset_name in ['How2SignOpenPose', 'How2SignNaive']:
 
-        if logger is not None:
-            logger.info(f"Train dataset dir: {video_dir}; sample num: {len(train_dataset)}", main_process_only=True)
-        else:
-            print(f"Train dataset dir: {video_dir}; sample num: {len(train_dataset)}")
-
-        # Use DistributedSampler for training if distributed=True
-        train_sampler = DistributedSampler(
-            train_dataset,
-            num_replicas=world_size,
-            rank=rank,
-            shuffle=True
-        ) if distributed else None
-
-        train_loader = DataLoader(
-            train_dataset,
-            batch_size=train_batch_size,
-            num_workers=num_workers,
-            shuffle=(train_sampler is None),
-            sampler=train_sampler,
-            drop_last=True,
-            pin_memory=True
-        )
-
-        # Log sampler type
-        if logger is not None:
-            logger.info(f"YouTubeASLOnlineDet train sampler: {type(train_loader.sampler).__name__}", main_process_only=True)
-        else:
-            print(f"YouTubeASLOnlineDet train sampler: {type(train_loader.sampler).__name__}")
-
-        val_loader = None
-        val_dataset = None
-        val_sampler = None
-        test_loader = None
-        test_dataset = None
-        test_sampler = None
-
-    elif dataset_name == 'how2sign':
-        splits = ['train', 'val', 'test']
-        data_dir = '/projects/kosecka/hongrui/dataset/how2sign'
-        data_sets = []
-        data_loaders = []
-
-        for split in splits:
+        if dataset_name == 'How2SignOpenPose':
+            data_dir = '/projects/kosecka/hongrui/dataset/how2sign'
             sentence_csv_path = os.path.join(data_dir, f'how2sign_{split}.csv')
             video_dir = f'/projects/kosecka/hongrui/dataset/how2sign/video_level/{split}/rgb_front/raw_videos'
             kpts_json_dir = f'/projects/kosecka/hongrui/dataset/how2sign/sentence_level/{split}/rgb_front/features/openpose_output/json'
-            data_set = How2SignDataset(
+            dataset = How2SignOpenPose(
                 sentence_csv_path,
                 kpts_json_dir,
                 video_dir,
                 n_frames=n_frames,
-                debug=debug
+                debug=debug,
+                modality=modality,
             )
-            data_sets.append(data_set)
-
-            if split == 'train':
-                train_dataset = data_set
-                # Use DistributedSampler for training if distributed=True
-                train_sampler = DistributedSampler(
-                    train_dataset,
-                    num_replicas=world_size,
-                    rank=rank,
-                    shuffle=True
-                ) if distributed else None
-
-                train_loader = DataLoader(
-                    train_dataset,
-                    batch_size=train_batch_size,
-                    num_workers=num_workers,
-                    shuffle=(train_sampler is None),
-                    sampler=train_sampler,
-                    drop_last=True,
-                    pin_memory=True
-                )
-
-                # Log sampler type
-                if logger is not None:
-                    logger.info(f"how2sign train sampler: {type(train_loader.sampler).__name__}", main_process_only=True)
-                else:
-                    print(f"how2sign train sampler: {type(train_loader.sampler).__name__}")
-
-            else:
-                sampler = DistributedSampler(
-                    data_set,
-                    num_replicas=world_size,
-                    rank=rank,
-                    shuffle=False
-                ) if distributed else None
-                data_loader = DataLoader(
-                    data_set,
-                    batch_size=val_batch_size,
-                    num_workers=num_workers,
-                    shuffle=(sampler is None),
-                    sampler=sampler,
-                    drop_last=False,
-                    pin_memory=True
-                )
-                if split == 'val':
-                    val_loader = data_loader
-                    val_dataset = data_set
-                    val_sampler = sampler
-                else:
-                    test_loader = data_loader
-                    test_dataset = data_set
-                    test_sampler = sampler
-
-        train_dataset, val_dataset, test_dataset = data_sets
+        elif dataset_name == 'How2SignNaive':
+            dataset = How2SignNaive(
+                split,
+                num_frames_per_clip=n_frames,
+                debug=debug,
+                modality=modality,
+                logger=logger,
+            )
 
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
 
-    return train_loader, val_loader, test_loader, train_dataset, val_dataset, test_dataset, train_sampler, val_sampler, test_sampler
+    # Use DistributedSampler for training if distributed=True
+    data_sampler = DistributedSampler(
+        dataset,
+        num_replicas=world_size,
+        rank=rank,
+        shuffle= (split == 'train'),
+    ) if distributed else None
+
+    data_loader = DataLoader(
+        dataset,
+        batch_size = batch_size,
+        num_workers = num_workers,
+        shuffle = ((data_sampler is None) and (split == 'train')),
+        sampler = data_sampler,
+        drop_last = (split == 'train'),
+        pin_memory = True
+    )
+
+    # Log sampler type
+    if not data_sampler is None:
+        sampler_type = {type(data_sampler.sampler).__name__}
+    else:
+        sampler_type = 'None'
+    if logger is not None:
+        logger.info(f"{dataset_name} {split}; sample num: {len(dataset)}", main_process_only=True)
+        logger.info(f"{dataset_name} {split} sampler: {sampler_type}", main_process_only=True)
+    else:
+        print(f"{dataset_name} {split}; sample num: {len(dataset)}")
+        print(f"{dataset_name} {split} sampler: {sampler_type}")
+
+
+    return data_loader, dataset, data_sampler
 
 if __name__ == '__main__':
     dataset_name = 'how2sign'
     dataset_name = 'YouTubeASLFramesNaive'
-    train_loader, val_loader, test_loader, train_dataset, val_dataset, test_dataset = get_dataloader(dataset_name)
-    for i, data in enumerate(val_loader):
+    data_loader, dataset, data_sampler = get_dataloader(dataset_name, split = 'train', debug=True, n_frames=30, distributed=False, batch_size=2)
+    for i, data in enumerate(data_loader):
         print(i)
         frames_tensor, text, keypoints_dict = data
         print(frames_tensor.shape)

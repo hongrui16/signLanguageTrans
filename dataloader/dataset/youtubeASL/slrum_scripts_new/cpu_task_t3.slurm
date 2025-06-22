@@ -29,7 +29,7 @@ cd /home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/data
 
 
 ### originally, start_idx was 104000, and end_idx was 157185
-python youTubeASLDumpJson.py --start_idx 41589 --end_idx 62384
+python process_frames_dump_annos_v2.py --start_idx 41589 --end_idx 62384
 
 
 # torchrun --nnodes=${NUM_NODES} --nproc_per_node=${GPUS_PER_NODE} train_VAE.py --debug 
