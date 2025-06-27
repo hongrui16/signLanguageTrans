@@ -17,55 +17,60 @@ if __name__ == '__main__':
 
 from utils.mediapipe_kpts_mapping import MediapipeKptsMapping
 
-class How2SignNaive(Dataset):
-    def __init__(self, split, root_dir = None, num_frames_per_clip = 150, **kwargs):
+class YouTubeASLFramesComposed(Dataset):
+    def __init__(self, split = 'train', ann_filepath_txt = None, num_frames_per_clip: int = 150, **kwargs):
+
         """
         Initialize the YouTube ASL dataset loader for pre-processed frames.
+        
         Args:
-            split (str): Dataset split, e.g., 'train', 'val', 'test'.
-            root_dir (str, optional): Root directory where the dataset is stored. If None,
+            clip_frame_dir (str): Directory containing frames (.jpg)
+            clip_anno_dir (str): Directory containing annotations (.json).
             num_frames_per_clip (int): Number of frames to sample per clip (default: 16).
-            frame_sample_rate (int): Frames per second to sample from the video (default: 30 FPS).
         """
-        self.logger = kwargs.get('logger', None)
-        self.debug = kwargs.get('debug', False)
-        self.modality = kwargs.get('modality', 'pose')
-        self.num_frames_per_clip = num_frames_per_clip
         self.frame_size = kwargs.get('img_size', (224, 224))
+
+        self.num_frames_per_clip = num_frames_per_clip
+        self.debug = kwargs.get('debug', False)
+        self.logger = kwargs.get('logger', None)
+        self.modality = kwargs.get('modality', 'pose')  # Default to video modality
+        # assert self.modality in ['pose', 'rgb', 'rgb_pose'], f"Unsupported modality: {self.modality}"
         
-        if 'rgb' in self.modality:
-            self.load_frame = True
+        self.load_frame = True if 'rgb' in self.modality else False
+        
+        
+        
+        self.root_dir = '/projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_frame_pose_0614/'
+        last_dir_name = os.path.basename(self.root_dir) # youtubeASL_frame_pose_0614
+        
+        self.clip_frame_dir = os.path.join(self.root_dir, 'youtubeASL_frames')
+        self.clip_anno_dir = os.path.join(self.root_dir, 'youtubeASL_anno')
+        
+        if ann_filepath_txt is None:
+            self.ann_filepath_txt = os.path.join(self.root_dir, f'{last_dir_name}_anno_filepaths.txt')
+            if not os.path.exists(self.ann_filepath_txt):
+                self.anno_filepaths = []
+                with open(self.ann_filepath_txt, 'w', encoding='utf-8') as f:
+                    for root, _, files in os.walk(self.clip_anno_dir):
+                        for file in files:
+                            if file.endswith('.json'):
+                                f.write(os.path.join(root, file) + '\n')
+                                self.anno_filepaths.append(os.path.join(root, file))
+            else:
+                self.ann_filepath_txt = os.path.join(self.root_dir, f'{last_dir_name}_anno_filepaths.txt')
+                self.anno_filepaths = self.load_annos_filepath(self.ann_filepath_txt)
         else:
-            self.load_frame = False
-        
-        if root_dir is None:
-            self.root_dir = '/projects/kosecka/hongrui/dataset/how2sign/processed_how2sign/'
+            self.ann_filepath_txt = ann_filepath_txt
+            self.anno_filepaths = self.load_annos_filepath(ann_filepath_txt)
+
+        if self.logger is None:
+            print(f"Loaded {len(self.anno_filepaths)} annotation files from {self.ann_filepath_txt}")
         else:
-            self.root_dir = root_dir
-            
-        self.split = split
+            self.logger.info(f"Loaded {len(self.anno_filepaths)} annotation files from {self.ann_filepath_txt}")
         
-        if split not in ['train', 'val', 'test']:
-            raise ValueError(f"Invalid split: {split}. Must be one of 'train', 'val', 'test'.")
         
-        self.split_dir = os.path.join(self.root_dir, self.split)
-        
-        self.clip_frame_dir = os.path.join(self.split_dir, 'frames')
-        self.clip_anno_dir = os.path.join(self.split_dir, 'annos')
-        
-        self.ann_filepath_txt = os.path.join(self.split_dir, f'{split}_annos_filepath.txt')
-        
-        if not os.path.exists(self.ann_filepath_txt):
-            annos_files = os.listdir(self.clip_anno_dir)
-            annos_files = [os.path.join(self.clip_anno_dir, f) for f in annos_files if f.endswith('.json')]
-            with open(self.ann_filepath_txt, 'w', encoding='utf-8') as f:
-                for anno_file in annos_files:
-                    f.write(anno_file + '\n')
 
         
-        self.annos_filepaths = self.load_annos_filepath(self.ann_filepath_txt)
-        # self.annos_info = self._find_load_clips_annos()
-                
         self.hand_mapping = MediapipeKptsMapping.hand_keypoints_mapping
         self.face_mapping = MediapipeKptsMapping.face_keypoints_mapping
         self.body_mapping = MediapipeKptsMapping.body_keypoints_mapping
@@ -74,24 +79,19 @@ class How2SignNaive(Dataset):
         self.hand_indices = [value for key, value in self.hand_mapping.items()]  # Map to MediaPipe hand landmarks (0–20)
         self.body_indices = [value for key, value in self.body_mapping.items()]  # Map to MediaPipe body landmarks (0–8)
         self.face_indices = [value for key, value in self.face_mapping.items()]
-                
         
+            
+        
+
         if self.debug:
-            max_num_clips = 1000 if 1000 < len(self.annos_filepaths) else len(self.annos_filepaths)
-            self.annos_filepaths = self.annos_filepaths[:max_num_clips]
+            max_num_clips = 1000 if 1000 < len(self.anno_filepaths) else len(self.anno_filepaths)
+            self.anno_filepaths = self.anno_filepaths[:max_num_clips]
 
-        if not self.logger is None:
-            self.logger.info(f"Total clips: {len(self.annos_filepaths)}")
-        else:
-            print(f"Total clips: {len(self.annos_filepaths)}")
 
-   
-   
-
-    def load_annos_filepath(self, anno_filepath_txt) -> List[Tuple[str, str]]:
+    def load_annos_filepath(self, ann_filepath_txt: str) -> List[Tuple[str, str]]:
         # read the annotation file paths from the text file
         annos_filepaths = []
-        with open(anno_filepath_txt, 'r', encoding='utf-8') as f:
+        with open(ann_filepath_txt, 'r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -104,61 +104,65 @@ class How2SignNaive(Dataset):
 
     def __len__(self) -> int:
         """Return the total number of clips in the dataset."""
-        return len(self.annos_filepaths)
+        return len(self.anno_filepaths)
 
     def __getitem__(self, idx: int, retry_count=0) -> Tuple[torch.Tensor, str, dict]:
         if self.debug:
             rank = dist.get_rank() if dist.is_initialized() else 0
             if self.logger:
-                self.logger.info(f"how2signNaive [Rank {rank}] fetching sample index {idx}")
+                self.logger.info(f"[Rank {rank}] fetching sample index {idx}")
             else:
-                print(f"how2signNaive [Rank {rank}] fetching sample index {idx}")
+                print(f"[Rank {rank}] fetching sample index {idx}")
 
-        clip_json_filepath = self.annos_filepaths[idx]
-        if not os.path.exists(clip_json_filepath):
+        clip_json_file = self.anno_filepaths[idx]
+        try:
+            with open(clip_json_file, 'r', encoding='utf-8') as f:
+                clip_anno_info = json.load(f)
+        except json.JSONDecodeError as e:
+            if retry_count >= 5:
+                raise RuntimeError(f"Too many corrupt JSON retries starting from index {idx}")
             if self.logger:
-                self.logger.error(f"Annotation file {clip_json_filepath} does not exist, skipping.")
+                self.logger.error(f"Error decoding JSON from {clip_json_file}: {e}")
             else:
-                print(f"Annotation file {clip_json_filepath} does not exist, skipping.")
-            return self.__getitem__(np.random.randint(0, len(self.annos_filepaths)-1), retry_count + 1)
-        
-        with open(clip_json_filepath, 'r', encoding='utf-8') as f:
-            clip_anno_info = json.load(f)
-
-
-        json_filename = os.path.basename(clip_json_filepath)
-        frames_filename = json_filename.replace('_anno.json', '_frames.mp4')
-        
-        frames_filepath = os.path.join(self.clip_frame_dir, frames_filename)
-        
-        if not os.path.exists(frames_filepath):
-            if self.logger:
-                self.logger.error(f"Frames file {frames_filepath} does not exist for clip {json_filename}, skipping.")
-            else:
-                print(f"Frames file {frames_filepath} does not exist for clip {json_filename}, skipping.")
-            ran_id = np.random.randint(0, len(self.annos_filepaths)-1)
+                print(f"Error decoding JSON from {clip_json_file}: {e}")
+            ran_id = np.random.randint(0, len(self.anno_filepaths)-1)
             return self.__getitem__(ran_id, retry_count + 1)
-        
-        ### read all frames from the video file
+
+        json_filename = os.path.basename(clip_json_file)
+        frames_filename = json_filename.replace('_anno.json', '_frames.mp4')
+
+        all_frames = []
         if self.load_frame:
-            cap = cv2.VideoCapture(frames_filepath)
+            # Check if the corresponding video frames exist
+            frames_path = os.path.join(self.clip_frame_dir, frames_filename)
+            if not os.path.exists(frames_path):
+                if self.logger:
+                    self.logger.error(f"Frame file {frames_path} does not exist for {clip_json_file}")
+                else:
+                    print(f"Frame file {frames_path} does not exist for {clip_json_file}")
+                ran_id = np.random.randint(0, len(self.anno_filepaths)-1)
+                return self.__getitem__(ran_id, retry_count + 1)
+            
+            ## read all frames from the video file
+            cap = cv2.VideoCapture(frames_path)
             if not cap.isOpened():
                 if self.logger:
-                    self.logger.error(f"Failed to open video file {frames_filepath} for clip {json_filename}.")
+                    self.logger.error(f"Failed to open video file {frames_path} for {clip_json_file}")
                 else:
-                    print(f"Failed to open video file {frames_filepath} for clip {json_filename}.")
-                ran_id = np.random.randint(0, len(self.annos_filepaths)-1)
+                    print(f"Failed to open video file {frames_path} for {clip_json_file}")
+                ran_id = np.random.randint(0, len(self.anno_filepaths)-1)
                 return self.__getitem__(ran_id, retry_count + 1)
-
-            all_frames = []
+            
             while True:
-                ret, frame_bgr = cap.read()
+                ret, frame = cap.read()
                 if not ret:
                     break
-                frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-                frame_rgb = cv2.resize(frame_rgb, self.frame_size)
-                all_frames.append(frame_rgb)
+                # Resize frame to the specified size
+                frame = cv2.resize(frame, (self.frame_size[1], self.frame_size[0]))
+                all_frames.append(frame)
             cap.release()
+            
+        
 
         # Read text
         text = clip_anno_info['text']
@@ -170,12 +174,14 @@ class How2SignNaive(Dataset):
      
 
         if len(frame_names) > self.num_frames_per_clip:
-            ## uniformly sample frames            
-            frame_names = self.uniform_with_jitter_sorted(frame_names, self.num_frames_per_clip, jitter_ratio=0.4)
-            
+            ## uniformly sample frames
+            frame_indices = np.linspace(0, len(frame_names) - 1, self.num_frames_per_clip).astype(int)
+            frame_names = [frame_names[i] for i in frame_indices]
+
+        
         hand_keypoints_all, body_keypoints_all, face_keypoints_all = [], [], []
         for frame_name in frame_names:
-
+        
             frame_keypoints = keyframes_dict[frame_name]
             hand_keypoints = frame_keypoints['hand']
             body_keypoints = frame_keypoints['body']
@@ -206,7 +212,6 @@ class How2SignNaive(Dataset):
         else:
             frames_tensor = torch.tensor(0, dtype=torch.float32)  # Placeholder if frames are not loaded
         
-        
         ## bady_keypoints_all: (N, 9, 2)
         ## hand_keypoints_all: (N, 42, 2)  # right hand + left hand
         ## face_keypoints_all: (N, 18, 2
@@ -226,7 +231,7 @@ class How2SignNaive(Dataset):
         hand_keypoints_all[~valid_hand_mask] = -1
         body_keypoints_all[~valid_body_mask] = -1
         face_keypoints_all[~valid_face_mask] = -1
-        
+
         # to tensor
         body_keypoints_all = torch.from_numpy(body_keypoints_all).float() # shape (N, 9, 2)
         hand_keypoints_all = torch.from_numpy(hand_keypoints_all).float()
@@ -244,29 +249,12 @@ class How2SignNaive(Dataset):
 
         return (frames_tensor, text, keypoints_dict)
 
-    def uniform_with_jitter_sorted(self, frame_names, num_samples, jitter_ratio=0.4):
-        total_frames = len(frame_names)
-        if total_frames <= num_samples:
-            return frame_names  # 不足就全取
-
-        base_positions = np.linspace(0, total_frames - 1, num_samples)
-        interval = (total_frames - 1) / (num_samples - 1)
-        max_jitter = interval * jitter_ratio
-
-        jitter = np.random.uniform(-max_jitter, max_jitter, size=num_samples)
-        jittered_positions = np.clip(np.round(base_positions + jitter), 0, total_frames - 1).astype(int)
-
-        # 强制递增，确保顺序不乱，重复帧可接受
-        jittered_positions = np.sort(jittered_positions)
-
-        return [frame_names[i] for i in jittered_positions]
-
 
 if __name__ == '__main__':
 
 
-    split = 'test'
-    dataset = How2SignNaive(split, load_frame = True)
+
+    dataset = YouTubeASLFramesComposed(load_frame = True)
   
     
     # get one sample and draw keypoints on the image

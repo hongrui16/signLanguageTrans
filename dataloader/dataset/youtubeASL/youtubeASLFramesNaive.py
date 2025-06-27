@@ -50,7 +50,7 @@ class YouTubeASLFramesNaive(Dataset):
         
         self.load_frame = True if 'rgb' in self.modality else False
         
-        self.frame_size = kwargs.get('frame_size', (224, 224))
+        self.frame_size = kwargs.get('img_size', (224, 224))
 
         
         self.hand_mapping = MediapipeKptsMapping.hand_keypoints_mapping
@@ -178,7 +178,29 @@ class YouTubeASLFramesNaive(Dataset):
             frames_tensor = torch.from_numpy(all_frames).float().permute(0, 3, 1, 2) / 255.0  # (N, 3, 224, 224)
         else:
             frames_tensor = torch.tensor(0, dtype=torch.float32)  # Placeholder if frames are not loaded
+        
+        
+        ## bady_keypoints_all: (N, 9, 2)
+        ## hand_keypoints_all: (N, 42, 2)  # right hand + left hand
+        ## face_keypoints_all: (N, 18, 2
             
+        middle_point_of_shoulders = (body_keypoints_all[:, 2] + body_keypoints_all[:, 5]) / 2.0 # shape (N, 2)
+        
+        valid_body_mask = body_keypoints_all > 0
+        valid_hand_mask = hand_keypoints_all > 0
+        valid_face_mask = face_keypoints_all > 0
+        
+        ## Normalize all keypoints to the middle point of shoulders
+        hand_keypoints_all[:, :, :2] -= middle_point_of_shoulders[:, None, :]
+        body_keypoints_all[:, :, :2] -= middle_point_of_shoulders[:, None, :]
+        face_keypoints_all[:, :, :2] -= middle_point_of_shoulders[:, None, :]
+        
+        ## Set invalid keypoints to -1
+        hand_keypoints_all[~valid_hand_mask] = -1
+        body_keypoints_all[~valid_body_mask] = -1
+        face_keypoints_all[~valid_face_mask] = -1
+
+
         # to tensor
         body_keypoints_all = torch.from_numpy(body_keypoints_all).float() # shape (N, 9, 2)
         hand_keypoints_all = torch.from_numpy(hand_keypoints_all).float()

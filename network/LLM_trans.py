@@ -4,8 +4,21 @@ from transformers import AutoModel, AutoTokenizer, AutoModelForSeq2SeqLM
 
 class SignLanguageLLM(nn.Module):
     """Large Language Model for Sign Language Translation"""
-    def __init__(self, model_name="facebook/mbart-large-50", tokenizer = None):
+    def __init__(self, model_name="facebook/mbart-large-50", tokenizer = None, **kwargs):
         super(SignLanguageLLM, self).__init__()
+        
+        freeze_llm = kwargs.get("freeze_llm", False)
+        logger = kwargs.get("logger", None)
+        pose_set = kwargs.get("pose_set", 'hand_body')
+        if 'face' in pose_set:
+            input_dim = 1024
+        elif 'hand' in pose_set and 'body' in pose_set:
+            input_dim = 768
+        elif 'hand' in pose_set:
+            input_dim = 512  # Default for hand only or body only
+        else:
+            raise ValueError(f"Unsupported pose_set: {pose_set}. Must include 'hand', 'body', or 'face'.")
+            
         if tokenizer is not None:
             self.tokenizer = tokenizer
         else:
@@ -18,11 +31,23 @@ class SignLanguageLLM(nn.Module):
 
 
         # Linear layer to map 4C -> LLM embedding dim
-        self.fc = nn.Linear(1024, self.model.config.hidden_size)  # hidden_size = 1024 for mbart-large-50
+        self.fc = nn.Linear(input_dim, self.model.config.hidden_size)  # hidden_size = 1024 for mbart-large-50
         self.norm = nn.LayerNorm(self.model.config.hidden_size)  # 添加归一化
         self.decoder_start_token_id = self.tokenizer.lang_code_to_id["en_XX"]
-        print(f"Model vocab size: {self.model.config.vocab_size}")
-        print(f"Tokenizer vocab size: {self.tokenizer.vocab_size}")
+        if logger is not None:
+            logger.info(f"Using model: {model_name}")
+            logger.info(f"Model vocab size: {self.model.config.vocab_size}")
+            logger.info(f"Tokenizer vocab size: {self.tokenizer.vocab_size}")
+            if freeze_llm:
+                logger.info("Freezing LLM parameters")
+        else:
+            print(f"Using model: {model_name}")
+            print(f"Model vocab size: {self.model.config.vocab_size}")
+            print(f"Tokenizer vocab size: {self.tokenizer.vocab_size}")
+        if freeze_llm:
+            print("Freezing LLM parameters")
+            for param in self.model.parameters():
+                param.requires_grad = False
 
 
     def forward(self, sign_features, mode="train", decoder_input_ids=None, attention_mask=None):

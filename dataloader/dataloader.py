@@ -12,6 +12,8 @@ from dataloader.dataset.youtubeASL.youtubeASL import YouTubeASL
 from dataloader.dataset.youtubeASL.youtubeASLFrames import YouTubeASLFrames
 from dataloader.dataset.youtubeASL.youTubeASLOnlineDet import YouTubeASLOnlineDet
 from dataloader.dataset.youtubeASL.youtubeASLFramesNaive import YouTubeASLFramesNaive
+from dataloader.dataset.youtubeASL.youtubeASLFramesComposed import YouTubeASLFramesComposed
+
 from dataloader.dataset.how2sign.how2sign_openpose import How2SignOpenPose
 from dataloader.dataset.how2sign.how2signNaive import How2SignNaive
 
@@ -29,7 +31,7 @@ def get_dataloader(
 ):
     batch_size = kwargs.get('batch_size', 32)
     modality = kwargs.get('modality', 'pose')
-
+    img_size = kwargs.get('img_size', (224, 224))
     # Log distributed training configuration
     if logger is not None:
         logger.info(f"Dataset: {dataset_name}, Distributed {split}: {distributed}, World size: {world_size}, Rank: {rank}", main_process_only=True)
@@ -42,7 +44,7 @@ def get_dataloader(
     else:
         num_workers = min(5, os.cpu_count() // world_size)  # Scale workers with available CPUs
 
-    if dataset_name in ['YouTubeASLFrames', 'YouTubeASLFramesNaive', 'YouTubeASLOnlineDet']:
+    if dataset_name in ['YouTubeASLFrames', 'YouTubeASLFramesNaive', 'YouTubeASLOnlineDet', 'YouTubeASLFramesComposed']:
         # if not split == 'train':
         #     if logger is not None:
         #         logger.warning(f"Dataset {dataset_name} only supports 'train' split. Returning None for {split}.", main_process_only=True)
@@ -59,6 +61,7 @@ def get_dataloader(
                 debug=debug,
                 logger=logger,
                 modality=modality,
+                img_size=img_size,
             )
         elif dataset_name == 'YouTubeASLFrames':
             dataset = YouTubeASLFrames(
@@ -68,6 +71,7 @@ def get_dataloader(
                 debug=debug,
                 logger=logger,
                 modality = modality,
+                img_size=img_size,
             )
         elif dataset_name == 'YouTubeASLOnlineDet':
             video_dir = '/projects/kosecka/hongrui/dataset/youtubeASL/youtube_ASL/'
@@ -76,6 +80,16 @@ def get_dataloader(
                 num_frames_per_clip=n_frames,
                 debug=debug,
                 modality = modality,
+                img_size=img_size,
+                logger=logger,
+            )
+        elif dataset_name == 'YouTubeASLFramesComposed':
+            dataset = YouTubeASLFramesComposed(
+                num_frames_per_clip=n_frames,
+                debug=debug,
+                modality = modality,
+                img_size=img_size,
+                logger=logger,
             )
         else:
             raise ValueError(f"Unsupported dataset: {dataset_name}")
@@ -94,6 +108,8 @@ def get_dataloader(
                 n_frames=n_frames,
                 debug=debug,
                 modality=modality,
+                img_size=img_size,
+                logger=logger,
             )
         elif dataset_name == 'How2SignNaive':
             dataset = How2SignNaive(
@@ -102,6 +118,7 @@ def get_dataloader(
                 debug=debug,
                 modality=modality,
                 logger=logger,
+                img_size=img_size,
             )
 
     else:
@@ -127,7 +144,7 @@ def get_dataloader(
 
     # Log sampler type
     if not data_sampler is None:
-        sampler_type = {type(data_sampler.sampler).__name__}
+        sampler_type = {type(data_sampler).__name__}
     else:
         sampler_type = 'None'
     if logger is not None:

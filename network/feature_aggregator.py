@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 
-def feature_aggretate(lh, rh, body, face):
+def feature_aggretate(lh, rh, body, face= None):
     """
     Args:
         lh, rh, body, face: (batch_size, T, N, C) - Pose features per group
@@ -12,8 +12,10 @@ def feature_aggretate(lh, rh, body, face):
     lh_pooled = lh.mean(dim=2).squeeze(-2)
     rh_pooled = rh.mean(dim=2).squeeze(-2)
     body_pooled = body.mean(dim=2).squeeze(-2)
+    if face is None:
+        return torch.cat([lh_pooled, rh_pooled, body_pooled], dim=-1)  # (batch_size, T, 4C)
+        # If face data is provided, pool it
     face_pooled = face.mean(dim=2).squeeze(-2)
-    
     # Concatenate along feature dimension
     return torch.cat([lh_pooled, rh_pooled, body_pooled, face_pooled], dim=-1)  # (batch_size, T, 4C)
 

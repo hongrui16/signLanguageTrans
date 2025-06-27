@@ -25,8 +25,12 @@ module load python
 source /home/rhong5/py310Torch/bin/activate
 cd /home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans
 
+PORT=$(( (RANDOM << 8 | RANDOM) & 0xFFFF ))
+echo "Random port: $PORT"
+
+
 # # Launch distributed training with accelerate
-accelerate launch --num_processes=2 --num_machines=1 --machine_rank=0 --main_process_ip=localhost --main_process_port=12345 \
+accelerate launch --num_processes=2 --num_machines=1 --machine_rank=0 --main_process_ip=localhost --main_process_port=$PORT \
     train_uniSign_dist.py 2> >(grep -v "absl::InitializeLog" | grep -v "gl_context_egl.cc" | grep -v "gl_context.cc" >&2)
 
 

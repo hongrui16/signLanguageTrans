@@ -1,7 +1,8 @@
 #!/bin/bash
 
+
 #SBATCH --partition=normal                    
-#SBATCH --job-name=unzip                   
+#SBATCH --job-name=t6                   
 #SBATCH --output=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/how2sign/zlog/%x-%N-%j.out  
 #SBATCH --error=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/how2sign/zlog/%x-%N-%j.err   
 #SBATCH --nodes=1
@@ -17,37 +18,17 @@ set echo
 umask 0027
 
 # to see ID and state of GPUs assigned
-# nvidia-smi
 
-# module load gnu10                           
-# module load python
+module load gnu10                           
+module load python
 
-# source /home/rhong5/py310Torch/bin/activate
+source /home/rhong5/py310Torch/bin/activate
 
-cd /projects/kosecka/hongrui/dataset/how2sign/video_zipfiles
-# unzip videos_part1.zip
-# unzip videos_part2.zip
-# unzip videos_part3.zip
-# unzip videos_part4.zip
-# unzip videos_part5.zip
-# unzip videos_part6.zip
-# unzip videos_part7.zip
-# unzip videos_part8.zip 
-# the above are done
+cd /home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/how2sign
 
 
+python how2sign_dump_json.py --start_idx 22260 --end_idx 26712
 
-unzip videos_part9.zip # this is missing
-
-# unzip videos_part10.zip
-# unzip videos_part11.zip
-# unzip videos_part12.zip
-# unzip videos_part13.zip
-# unzip videos_part14.zip
-# unzip videos_part15.zip
-
-
-# rm train_raw_videos_all.zip
 
 # torchrun --nnodes=${NUM_NODES} --nproc_per_node=${GPUS_PER_NODE} train_VAE.py --debug 
 

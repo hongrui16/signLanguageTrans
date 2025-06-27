@@ -64,6 +64,10 @@ class UniSignTrans:
         self.finetune = args.finetune
         self.n_frames = args.n_frames
         self.train_batch_size  = args.train_batch_size
+        self.max_epochs = args.max_epochs
+        self.img_size = args.img_size
+        self.freeze_llm = args.freeze_llm
+        self.pose_set = args.pose_set
         
         assert self.modality in ['pose', 'rgb', 'pose_rgb'], f"Unsupported modality: {self.modality}"
         
@@ -133,7 +137,6 @@ class UniSignTrans:
 
         self.start_epoch = 0
         self.best_loss = float('inf')
-        self.max_epochs = 45
         self.logger.info(f"Training epochs: {self.max_epochs}", main_process_only=self.accelerator.is_main_process)
 
         self.logger.info(f"feature encoder: {self.feature_encoder_name}", main_process_only=self.accelerator.is_main_process)
@@ -166,8 +169,14 @@ class UniSignTrans:
             world_size=self.accelerator.num_processes,
             rank=self.accelerator.process_index,
             split = 'train',
+            img_size=self.img_size,
         )
         
+        val_loader, val_dataset, self.val_sampler = None, None, None
+        val_split = 'val'
+        if self.dataset_name == 'YouTubeASLFramesNaive':
+            self.dataset_name = 'YouTubeASLFramesComposed'
+        val_split = 'test'
         val_loader, val_dataset, self.val_sampler = get_dataloader(
             dataset_name=self.dataset_name,
             logger=self.logger,
@@ -178,21 +187,26 @@ class UniSignTrans:
             distributed=distributed,
             world_size=self.accelerator.num_processes,
             rank=self.accelerator.process_index,
-            split = 'val',
+            split = val_split,
+            img_size=self.img_size,
         )
-        
-        test_loader, test_dataset, self.test_sampler = get_dataloader(
-            dataset_name=self.dataset_name,
-            logger=self.logger,
-            debug=self.debug,
-            batch_size=self.train_batch_size,
-            modality=self.modality,
-            n_frames=self.n_frames,
-            distributed=distributed,
-            world_size=self.accelerator.num_processes,
-            rank=self.accelerator.process_index,
-            split = 'test',
-        )
+
+        test_loader, test_dataset, self.test_sampler = None, None, None
+        if self.dataset_name == 'YouTubeASLFramesNaive':
+            self.dataset_name = 'YouTubeASLFramesComposed'
+        # test_loader, test_dataset, self.test_sampler = get_dataloader(
+        #     dataset_name=self.dataset_name,
+        #     logger=self.logger,
+        #     debug=self.debug,
+        #     batch_size=self.train_batch_size,
+        #     modality=self.modality,
+        #     n_frames=self.n_frames,
+        #     distributed=distributed,
+        #     world_size=self.accelerator.num_processes,
+        #     rank=self.accelerator.process_index,
+        #     split = 'test',
+        #     img_size=self.img_size,
+        # )
         
         if isinstance(train_loader.sampler, DistributedSampler):
             self.logger.info("Train loader correctly uses DistributedSampler", main_process_only=self.accelerator.is_main_process)
@@ -268,7 +282,10 @@ class UniSignTrans:
 
         self.logger.info("Tokenizer loaded.", main_process_only=self.accelerator.is_main_process)
 
-        self.UniSignModel = UniSignNetwork(hidden_dim=256, LLM_name="facebook/mbart-large-50", device=self.device, tokenizer=self.tokenizer)
+        self.UniSignModel = UniSignNetwork(hidden_dim=256, LLM_name="facebook/mbart-large-50", 
+                                           device=self.device, tokenizer=self.tokenizer,
+                                           freeze_llm = self.freeze_llm,
+                                           )
         self.UniSignModel.float().to(self.device)
         # Wrap model with DDP
         self.UniSignModel = self.accelerator.prepare(self.UniSignModel)
@@ -343,7 +360,11 @@ class UniSignTrans:
             # Move all tensors to the correct device
             hand_keypoints = keypoints_dict['hand'].to(self.device).float()
             body_keypoints = keypoints_dict['body'].to(self.device).float()
-            face_keypoints = keypoints_dict['face'].to(self.device).float()
+            if 'face' in self.pose_set:
+                face_keypoints = keypoints_dict['face'].to(self.device).float()
+            else:
+                face_keypoints = None
+                
             right_hand_keypoints = hand_keypoints[:, :, :21, :].float()
             left_hand_keypoints = hand_keypoints[:, :, 21:, :].float()
             if self.use_feature_encoder:
@@ -445,7 +466,10 @@ class UniSignTrans:
                 # Move all tensors to the correct device
                 hand_keypoints = keypoints_dict['hand'].to(self.device).float()
                 body_keypoints = keypoints_dict['body'].to(self.device).float()
-                face_keypoints = keypoints_dict['face'].to(self.device).float()
+                if 'face' in self.pose_set:
+                    face_keypoints = keypoints_dict['face'].to(self.device).float()
+                else:
+                    face_keypoints = None
                 right_hand_keypoints = hand_keypoints[:, :, :21, :].float()
                 left_hand_keypoints = hand_keypoints[:, :, 21:, :].float()
                 if self.use_feature_encoder:
@@ -754,7 +778,7 @@ class UniSignTrans:
         if not self.test_loader is None:
             if self.accelerator.is_main_process:
                 self.logger.info("Loading best model for testing...", main_process_only=self.accelerator.is_main_process)
-                self.load_ckpt(self.best_ckpt_path)
+                self.load_ckpt_after_acceleratorPrepare(self.best_ckpt_path)
 
                 
 
@@ -859,11 +883,11 @@ class UniSignTrans:
             if self.use_feature_encoder and optimizer_states['optimizer_encoder']:
                 self.optimizer_encoder.load_state_dict(optimizer_states['optimizer_encoder'])
 
-        self.start_epoch = optimizer_states['start_epoch']
-        self.best_loss = optimizer_states['best_loss']
+            self.start_epoch = optimizer_states['epoch']
+            self.best_loss = optimizer_states['best_loss']
 
-        self.logger.info(f"Start epoch: {self.start_epoch}", main_process_only=self.accelerator.is_main_process)
-        self.logger.info(f"Best loss: {self.best_loss}", main_process_only=self.accelerator.is_main_process)
+            self.logger.info(f"Start epoch: {self.start_epoch}", main_process_only=self.accelerator.is_main_process)
+            self.logger.info(f"Best loss: {self.best_loss}", main_process_only=self.accelerator.is_main_process)
 
         self.accelerator.wait_for_everyone()
 
@@ -884,6 +908,11 @@ def get_args():
     parser.add_argument("--finetune", default=arg_settings["finetune"], action="store_true", help="Fine-tune the model")
     parser.add_argument("--n_frames", type=int, default=arg_settings["n_frames"], help="Number of frames")
     parser.add_argument("--train_batch_size", type=int, default=arg_settings["train_batch_size"], help="Batch size")
+    parser.add_argument("--img_size", type=tuple, default=arg_settings["img_size"], help="Image size for input")
+    parser.add_argument("--max_epochs", type=int, default=arg_settings["max_epochs"], help="Maximum number of epochs") 
+    parser.add_argument("--freeze_llm", default=arg_settings["freeze_llm"], action="store_true", help="Freeze the LLM during training")  
+    parser.add_argument("--pose_set", type=str, default=arg_settings["pose_set"], help="Pose set to use, e.g., hand_body, body, hand")
+
     return parser.parse_args()
 
 if __name__ == '__main__':

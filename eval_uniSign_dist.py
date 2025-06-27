@@ -558,6 +558,7 @@ def get_args():
     parser.add_argument("--n_frames", type=int, default=arg_settings["n_frames"], help="Number of frames")
     parser.add_argument("--eval_batch_size", type=int, default=arg_settings["eval_batch_size"], help="Batch size")
     parser.add_argument("--eval_log_dir", type=str, default=arg_settings["eval_log_dir"], help="Directory to save logs")
+    parser.add_argument("--img_size", type=tuple, default=arg_settings["img_size"], help="Image size for input")
     return parser.parse_args()
 
 if __name__ == '__main__':

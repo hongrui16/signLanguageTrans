@@ -18,6 +18,11 @@ class UniSignNetwork(nn.Module):
 
         self.device = device
         tokenizer = kwargs.get("tokenizer", None)
+        freeze_llm = kwargs.get("freeze_llm", False)
+        pose_set = kwargs.get("pose_set", 'hand_body')
+        
+        self.pose_set = pose_set
+        
         hand_adj_matrix = MediapipeKptsMapping.hand_adj_matrix
         face_adj_matrix = MediapipeKptsMapping.face_adj_matrix
         body_adj_matrix = MediapipeKptsMapping.body_adj_matrix
@@ -30,17 +35,22 @@ class UniSignNetwork(nn.Module):
         self.pose_encoder_lh = PoseEncoder(feature_dim, hand_adj_matrix)
         self.pose_encoder_rh = PoseEncoder(feature_dim, hand_adj_matrix)
         self.pose_encoder_body = PoseEncoder(feature_dim, body_adj_matrix)
-        self.pose_encoder_face = PoseEncoder(feature_dim, face_adj_matrix)
-
+        
         # Separate Temporal Encoders (ST-GCN) for different parts
         self.temporal_encoder_lh = STGCNTemporalEncoder(in_features=256, out_dim=hidden_dim, adj=hand_adj_matrix)
         self.temporal_encoder_rh = STGCNTemporalEncoder(in_features=256, out_dim=hidden_dim, adj=hand_adj_matrix)
         self.temporal_encoder_body = STGCNTemporalEncoder(in_features=256, out_dim=hidden_dim, adj=body_adj_matrix)
-        self.temporal_encoder_face = STGCNTemporalEncoder(in_features=256, out_dim=hidden_dim, adj=face_adj_matrix)
+        
+        if 'face' in pose_set:
+            # If face is included in the pose set, use the face encoder            
+            self.pose_encoder_face = PoseEncoder(feature_dim, face_adj_matrix)
+            self.temporal_encoder_face = STGCNTemporalEncoder(in_features=256, out_dim=hidden_dim, adj=face_adj_matrix)
 
-        self.llm_trans = SignLanguageLLM(LLM_name, tokenizer = tokenizer)
 
-    def forward(self, lh, rh, body, face, split = 'train', decoder_input_ids = None):
+    
+        self.llm_trans = SignLanguageLLM(LLM_name, tokenizer = tokenizer, freeze_llm = freeze_llm)
+
+    def forward(self, lh, rh, body, face = None, split = 'train', decoder_input_ids = None):
         """
         Args:
             lh, rh, body, face: (batch_size, T, N, C) - Pose inputs
@@ -52,16 +62,19 @@ class UniSignNetwork(nn.Module):
         lh_features = self.pose_encoder_lh(lh)
         rh_features = self.pose_encoder_rh(rh)
         body_features = self.pose_encoder_body(body)
-        face_features = self.pose_encoder_face(face)
 
         # Temporal Encoding for each part
         lh_features = self.temporal_encoder_lh(lh_features)
         rh_features = self.temporal_encoder_rh(rh_features)
         body_features = self.temporal_encoder_body(body_features)
-        face_features = self.temporal_encoder_face(face_features)
-
-        # Feature Aggregation
-        sign_features = feature_aggretate(lh_features, rh_features, body_features, face_features)
+        
+        if face is None or 'face' not in self.pose_set:
+            sign_features = feature_aggretate(lh_features, rh_features, body_features)            
+        else:
+            # Feature Aggregation
+            face_features = self.pose_encoder_face(face)
+            face_features = self.temporal_encoder_face(face_features)
+            sign_features = feature_aggretate(lh_features, rh_features, body_features, face_features)
 
         # LLM Translation
         return self.llm_trans(sign_features, mode = split, decoder_input_ids = decoder_input_ids)  # LLM output embeddings
