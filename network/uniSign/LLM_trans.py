@@ -4,8 +4,13 @@ from transformers import AutoModel, AutoTokenizer, AutoModelForSeq2SeqLM
 
 class SignLanguageLLM(nn.Module):
     """Large Language Model for Sign Language Translation"""
-    def __init__(self, model_name="facebook/mbart-large-50", tokenizer = None, **kwargs):
+    def __init__(self, llm_name="facebook/mbart-large-50", **kwargs):
         super(SignLanguageLLM, self).__init__()
+        if 'mbart' in llm_name:
+            model_name = "facebook/mbart-large-50"
+        else:
+            raise ValueError(f"Unsupported model_name: {llm_name}. Use 'facebook/mbart-large-50'.")
+        
         
         freeze_llm = kwargs.get("freeze_llm", False)
         logger = kwargs.get("logger", None)
@@ -19,10 +24,13 @@ class SignLanguageLLM(nn.Module):
         else:
             raise ValueError(f"Unsupported pose_set: {pose_set}. Must include 'hand', 'body', or 'face'.")
             
-        if tokenizer is not None:
-            self.tokenizer = tokenizer
-        else:
-            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        
+        self.tokenizer = AutoTokenizer.from_pretrained(
+                model_name,
+                src_lang="en_XX",
+                tgt_lang="en_XX"
+            )
+        
         self.model = AutoModelForSeq2SeqLM.from_pretrained(model_name)  # Use Seq2SeqLM version
 
         # 解决 vocab size 不匹配的问题

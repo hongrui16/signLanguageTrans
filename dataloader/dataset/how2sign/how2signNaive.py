@@ -107,12 +107,12 @@ class How2SignNaive(Dataset):
         return len(self.annos_filepaths)
 
     def __getitem__(self, idx: int, retry_count=0) -> Tuple[torch.Tensor, str, dict]:
-        if self.debug:
-            rank = dist.get_rank() if dist.is_initialized() else 0
-            if self.logger:
-                self.logger.info(f"how2signNaive [Rank {rank}] fetching sample index {idx}")
-            else:
-                print(f"how2signNaive [Rank {rank}] fetching sample index {idx}")
+        # if self.debug:
+        #     rank = dist.get_rank() if dist.is_initialized() else 0
+        #     if self.logger:
+        #         self.logger.info(f"how2signNaive [Rank {rank}] fetching sample index {idx}")
+        #     else:
+        #         print(f"how2signNaive [Rank {rank}] fetching sample index {idx}")
 
         clip_json_filepath = self.annos_filepaths[idx]
         if not os.path.exists(clip_json_filepath):

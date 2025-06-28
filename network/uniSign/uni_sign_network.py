@@ -3,24 +3,25 @@ import torch.nn as nn
 import numpy as np
 
 
-from network.pose_encoder import PoseEncoder
-from network.feature_aggregator import feature_aggretate
-from network.LLM_trans import SignLanguageLLM
-from network.temporal_encoder import STGCNTemporalEncoder
+from network.uniSign.pose_encoder import PoseEncoder
+from network.uniSign.feature_aggregator import feature_aggretate
+from network.uniSign.LLM_trans import SignLanguageLLM
+from network.uniSign.temporal_encoder import STGCNTemporalEncoder
 
 from utils.mediapipe_kpts_mapping import MediapipeKptsMapping
 
 
 class UniSignNetwork(nn.Module):
     """Full Uni-Sign Model: Separate Encoders for Pose and Temporal Processing"""
-    def __init__(self, feature_dim = 2, hidden_dim=256, LLM_name="facebook/mbart-large-50", device = 'cpu',  **kwargs):
+    def __init__(self, kpts_dim = 2, hidden_dim=256, device = 'cpu',  **kwargs):
         super(UniSignNetwork, self).__init__()
 
         self.device = device
-        tokenizer = kwargs.get("tokenizer", None)
         freeze_llm = kwargs.get("freeze_llm", False)
         pose_set = kwargs.get("pose_set", 'hand_body')
-        
+        llm_name = kwargs.get("llm_name", "mbart-large-50")  # Default to MBart50
+        self.llm_name = llm_name
+
         self.pose_set = pose_set
         
         hand_adj_matrix = MediapipeKptsMapping.hand_adj_matrix
@@ -32,9 +33,9 @@ class UniSignNetwork(nn.Module):
         body_adj_matrix = torch.tensor(body_adj_matrix, dtype=torch.float32).to(self.device)
 
         # Separate Pose Encoders for different parts
-        self.pose_encoder_lh = PoseEncoder(feature_dim, hand_adj_matrix)
-        self.pose_encoder_rh = PoseEncoder(feature_dim, hand_adj_matrix)
-        self.pose_encoder_body = PoseEncoder(feature_dim, body_adj_matrix)
+        self.pose_encoder_lh = PoseEncoder(kpts_dim, hand_adj_matrix)
+        self.pose_encoder_rh = PoseEncoder(kpts_dim, hand_adj_matrix)
+        self.pose_encoder_body = PoseEncoder(kpts_dim, body_adj_matrix)
         
         # Separate Temporal Encoders (ST-GCN) for different parts
         self.temporal_encoder_lh = STGCNTemporalEncoder(in_features=256, out_dim=hidden_dim, adj=hand_adj_matrix)
@@ -43,12 +44,12 @@ class UniSignNetwork(nn.Module):
         
         if 'face' in pose_set:
             # If face is included in the pose set, use the face encoder            
-            self.pose_encoder_face = PoseEncoder(feature_dim, face_adj_matrix)
+            self.pose_encoder_face = PoseEncoder(kpts_dim, face_adj_matrix)
             self.temporal_encoder_face = STGCNTemporalEncoder(in_features=256, out_dim=hidden_dim, adj=face_adj_matrix)
 
 
     
-        self.llm_trans = SignLanguageLLM(LLM_name, tokenizer = tokenizer, freeze_llm = freeze_llm)
+        self.llm_trans = SignLanguageLLM(llm_name, freeze_llm = freeze_llm)
 
     def forward(self, lh, rh, body, face = None, split = 'train', decoder_input_ids = None):
         """
@@ -94,7 +95,7 @@ class UniSignNetwork(nn.Module):
 if __name__ == "__main__":
     batch_size = 4
     seq_length = 16
-    feature_dim = 3
+    kpts_dim = 3
 
     num_keypoints = {"lh": 21, "rh": 21, "body": 9, "face": 18}
 
@@ -105,10 +106,10 @@ if __name__ == "__main__":
 
     model = UniSignNetwork(num_keypoints)
 
-    lh = torch.rand(batch_size, seq_length, num_keypoints["lh"], feature_dim)
-    rh = torch.rand(batch_size, seq_length, num_keypoints["rh"], feature_dim)
-    body = torch.rand(batch_size, seq_length, num_keypoints["body"], feature_dim)
-    face = torch.rand(batch_size, seq_length, num_keypoints["face"], feature_dim)
+    lh = torch.rand(batch_size, seq_length, num_keypoints["lh"], kpts_dim)
+    rh = torch.rand(batch_size, seq_length, num_keypoints["rh"], kpts_dim)
+    body = torch.rand(batch_size, seq_length, num_keypoints["body"], kpts_dim)
+    face = torch.rand(batch_size, seq_length, num_keypoints["face"], kpts_dim)
 
     output = model(lh, rh, body, face, adj_lh, adj_rh, adj_body, adj_face)
     print("LLM Output Shape:", output.shape)

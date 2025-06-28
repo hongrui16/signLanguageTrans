@@ -54,7 +54,7 @@ cd /home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans
 
 
 # Check Python and CUDA
-python uniSign.py 2> >(grep -v "absl::InitializeLog" | grep -v "gl_context_egl.cc" | grep -v "gl_context.cc" >&2)
+python train_signTran.py 2> >(grep -v "absl::InitializeLog" | grep -v "gl_context_egl.cc" | grep -v "gl_context.cc" >&2)
 
 # torchrun --nnodes=${NUM_NODES} --nproc_per_node=${GPUS_PER_NODE} train_VAE.py --debug 
 

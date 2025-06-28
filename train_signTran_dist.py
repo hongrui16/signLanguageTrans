@@ -30,12 +30,13 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 
 from transformers import MBartTokenizer
 from transformers import AutoTokenizer
-
-
-
-from network.uni_sign_network import UniSignNetwork
-from network.feature_encoder import get_encoder
 from transformers import MBartTokenizer, MBartForConditionalGeneration
+
+
+
+from network.uniSign.uni_sign_network import UniSignNetwork
+from network.youtubeASL_baseline.youtubeASL_baseline import YouTubeASLBaseline
+from network.uniSign.feature_encoder import get_encoder
 from dataloader.dataloader import get_dataloader
 from utils.mediapipe_kpts_mapping import MediapipeKptsMapping
 from config.config import arg_settings
@@ -52,29 +53,32 @@ os.environ["GLOG_minloglevel"] = "3"
 os.environ["MESA_DEBUG"] = "0"
 os.environ["MESA_LOG_LEVEL"] = "error"
 
-class UniSignTrans:
+class SignTrans:
     def __init__(self, args, **kwargs):
         self.args = args
         self.debug = args.debug
         self.model_name = args.model_name
         self.resume_path = args.resume
         self.dataset_name = args.dataset_name
-        self.feature_encoder_name = args.feature_encoder
+        self.img_encoder_name = args.img_encoder
         self.modality = args.modality
         self.finetune = args.finetune
         self.n_frames = args.n_frames
         self.train_batch_size  = args.train_batch_size
         self.max_epochs = args.max_epochs
         self.img_size = args.img_size
-        self.freeze_llm = args.freeze_llm
         self.pose_set = args.pose_set
+        self.llm_name = args.llm_name
+        self.freeze_llm = args.freeze_llm
+        
+        self.ignore_index = -100 # Used for ignoring padding tokens in loss computation
         
         assert self.modality in ['pose', 'rgb', 'pose_rgb'], f"Unsupported modality: {self.modality}"
         
         if self.modality == 'pose':
-            self.use_feature_encoder = False
+            self.use_img_encoder = False
         else:
-            self.use_feature_encoder = True 
+            self.use_img_encoder = True 
 
         time_stamp = kwargs.get('time_stamp', datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
         slurm_job_id = kwargs.get('slurm_job_id', os.environ.get('SLURM_JOB_ID', '0'))
@@ -84,8 +88,8 @@ class UniSignTrans:
         self.init_distributed()
 
         
-        self.weight_name_prefix = f'{self.model_name}_{self.modality}'
-        dir_str = f'{self.dataset_name}/{time_stamp}_JID-{slurm_job_id}'
+        self.ckpt_name_prefix = f'{self.model_name}_{self.modality}'
+        dir_str = f'{self.model_name}/{self.dataset_name}/{time_stamp}_JID-{slurm_job_id}'
         
         log_dir = f'zlog/{dir_str}'
         self.log_dir = log_dir
@@ -137,11 +141,14 @@ class UniSignTrans:
 
         self.start_epoch = 0
         self.best_loss = float('inf')
+        self.logger.info(f"model_name: {self.model_name}", main_process_only=self.accelerator.is_main_process)
+        self.logger.info(f"resume_path: {self.resume_path}", main_process_only=self.accelerator.is_main_process)
+
         self.logger.info(f"Training epochs: {self.max_epochs}", main_process_only=self.accelerator.is_main_process)
 
-        self.logger.info(f"feature encoder: {self.feature_encoder_name}", main_process_only=self.accelerator.is_main_process)
+        self.logger.info(f"image encoder: {self.img_encoder_name}", main_process_only=self.accelerator.is_main_process)
 
-        self.logger.info(f"Use use_feature_encoder: {self.use_feature_encoder}", main_process_only=self.accelerator.is_main_process)
+        self.logger.info(f"Use use_img_encoder: {self.use_img_encoder}", main_process_only=self.accelerator.is_main_process)
 
         self.device = self.accelerator.device
         self.logger.info(f"Using device: {self.device}", main_process_only=self.accelerator.is_main_process)
@@ -252,12 +259,12 @@ class UniSignTrans:
                 self.logger.info(f"frames_tensor Shape: {frames_tensor.shape}", main_process_only=self.accelerator.is_main_process)
             break
 
-        if self.use_feature_encoder:
-            self.feature_encoder, encoder_output_size = get_encoder(self.feature_encoder_name, self.device)
+        if self.use_img_encoder:
+            self.img_encoder, encoder_output_size = get_encoder(self.img_encoder_name, self.device)
             
         else:
             encoder_output_size = 0
-            self.feature_encoder = None
+            self.img_encoder = None
 
         self.hand_mapping = MediapipeKptsMapping.hand_keypoints_mapping
         self.face_mapping = MediapipeKptsMapping.face_keypoints_mapping
@@ -274,33 +281,52 @@ class UniSignTrans:
             "face": len(self.face_indices)
         }
 
-        self.tokenizer = AutoTokenizer.from_pretrained(
-                "facebook/mbart-large-50",
-                src_lang="en_XX",
-                tgt_lang="en_XX"
-            )
+        input_dim = 0
+        if 'face' in self.pose_set:
+            input_dim += len(self.face_indices) * 2
+        if 'body' in self.pose_set:
+            input_dim += len(self.body_indices) * 2
+        if 'hand' in self.pose_set:
+            input_dim += len(self.hand_indices) * 4
+        
 
         self.logger.info("Tokenizer loaded.", main_process_only=self.accelerator.is_main_process)
-
-        self.UniSignModel = UniSignNetwork(hidden_dim=256, LLM_name="facebook/mbart-large-50", 
-                                           device=self.device, tokenizer=self.tokenizer,
-                                           freeze_llm = self.freeze_llm,
-                                           )
-        self.UniSignModel.float().to(self.device)
+        if self.model_name == 'YouTubeASLBaseline':
+            self.signModel = YouTubeASLBaseline(
+                input_dim=input_dim,
+                device=self.device,
+                freeze_llm=self.freeze_llm,
+                llm_name=self.llm_name,
+            )
+            self.tokenizer = self.signModel.tokenizer
+            self.logger.info(f"Tokenizer vocab size: {self.tokenizer.vocab_size}", main_process_only=self.accelerator.is_main_process)
+        elif self.model_name == 'UniSignNetwork':            
+            self.signModel = UniSignNetwork(hidden_dim=256, LLM_name="facebook/mbart-large-50", 
+                                            device=self.device,
+                                            freeze_llm = self.freeze_llm,
+                                            llm_name=self.llm_name,
+                                            )
+            self.tokenizer = self.signModel.llm_trans.tokenizer
+            self.logger.info(f"Tokenizer vocab size: {self.tokenizer.vocab_size}", main_process_only=self.accelerator.is_main_process)
+        else:
+            raise ValueError(f"Unsupported model name: {self.model_name}. Must be 'YouTubeASLBaseline' or 'UniSignNetwork'.")
+        
+        
+        self.signModel.float().to(self.device)
         # Wrap model with DDP
-        self.UniSignModel = self.accelerator.prepare(self.UniSignModel)
+        self.signModel = self.accelerator.prepare(self.signModel)
 
         
-        self.optimizer_UniSignModel = torch.optim.Adam(self.UniSignModel.parameters(), lr=2e-4)  # Scaled for effective batch size
-        self.optimizer_UniSignModel = self.accelerator.prepare(self.optimizer_UniSignModel)
+        self.optimizer = torch.optim.Adam(self.signModel.parameters(), lr=2e-4)  # Scaled for effective batch size
+        self.optimizer = self.accelerator.prepare(self.optimizer)
 
         
 
-        if self.use_feature_encoder:
-            self.feature_encoder.to(self.device)
-            self.optimizer_encoder = torch.optim.Adam(self.feature_encoder.parameters(), lr=2e-4)
+        if self.use_img_encoder:
+            self.img_encoder.to(self.device)
+            self.optimizer_encoder = torch.optim.Adam(self.img_encoder.parameters(), lr=2e-4)
             self.optimizer_encoder = self.accelerator.prepare(self.optimizer_encoder)
-            self.accelerator.prepare(self.feature_encoder)
+            self.accelerator.prepare(self.img_encoder)
 
         if self.resume_path is not None:
             self.load_ckpt_after_acceleratorPrepare(self.resume_path)
@@ -332,9 +358,9 @@ class UniSignTrans:
         else:
             self.logger.warning(f"Train loader sampler is not DistributedSampler, skipping epoch setting, rank: {self.accelerator.process_index}", main_process_only=self.accelerator.is_main_process)
 
-        self.UniSignModel.train()
-        if self.use_feature_encoder:
-            self.feature_encoder.train()
+        self.signModel.train()
+        if self.use_img_encoder:
+            self.img_encoder.train()
 
         epoch_loss = 0
         total_steps = len(dataloader)
@@ -367,13 +393,15 @@ class UniSignTrans:
                 
             right_hand_keypoints = hand_keypoints[:, :, :21, :].float()
             left_hand_keypoints = hand_keypoints[:, :, 21:, :].float()
-            if self.use_feature_encoder:
+            if self.use_img_encoder:
                 frames_tensor = frames_tensor.to(self.device).float()
 
             decoder_input_ids, targets = self.encode_text(text)
+            # print("decoder_input_ids min:", decoder_input_ids.min().item())
+            # print("decoder_input_ids max:", decoder_input_ids.max().item())
 
-            with self.accelerator.accumulate(self.UniSignModel):  # Support gradient accumulation
-                logits, encoder_hidden = self.UniSignModel(
+            with self.accelerator.accumulate(self.signModel):  # Support gradient accumulation
+                logits, encoder_hidden = self.signModel(
                     left_hand_keypoints,
                     right_hand_keypoints,
                     body_keypoints,
@@ -383,9 +411,9 @@ class UniSignTrans:
                 loss = self.compute_translation_loss(targets, logits)
                 self.accelerator.backward(loss)
 
-                self.optimizer_UniSignModel.step()
-                self.optimizer_UniSignModel.zero_grad()
-                if self.use_feature_encoder:
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+                if self.use_img_encoder:
                     self.optimizer_encoder.step()
                     self.optimizer_encoder.zero_grad()
 
@@ -433,9 +461,9 @@ class UniSignTrans:
 
 
 
-        self.UniSignModel.eval()
-        if self.use_feature_encoder:
-            self.feature_encoder.eval()
+        self.signModel.eval()
+        if self.use_img_encoder:
+            self.img_encoder.eval()
 
         epoch_loss = 0
         bleu_scores = {1: [], 2: [], 3: [], 4: []}
@@ -472,11 +500,10 @@ class UniSignTrans:
                     face_keypoints = None
                 right_hand_keypoints = hand_keypoints[:, :, :21, :].float()
                 left_hand_keypoints = hand_keypoints[:, :, 21:, :].float()
-                if self.use_feature_encoder:
-                    frames_tensor = frames_tensor.to(self.device).float()
+
 
                 decoder_input_ids, targets = self.encode_text(text)
-                translated_text, encoder_hidden = self.UniSignModel(
+                translated_text, encoder_hidden = self.signModel(
                     left_hand_keypoints,
                     right_hand_keypoints,
                     body_keypoints,
@@ -485,38 +512,9 @@ class UniSignTrans:
                     decoder_input_ids=decoder_input_ids
                 )
 
-                generated_ids = self.tokenizer(
-                    translated_text,
-                    return_tensors='pt',
-                    padding=True,
-                    truncation=True,
-                    max_length=128
-                )['input_ids'].to(self.device)
-
-                encoder_outputs = (encoder_hidden,)
-                if self.distributed:
-                    outputs = self.UniSignModel.module.llm_trans.model(
-                        encoder_outputs=encoder_outputs,
-                        decoder_input_ids=generated_ids,
-                        return_dict=True
-                    )
-                else:
-                    outputs = self.UniSignModel.llm_trans.model(
-                        encoder_outputs=encoder_outputs,
-                        decoder_input_ids=generated_ids,
-                        return_dict=True
-                    )
-                logits = outputs.logits
-
-                loss = self.compute_translation_loss(targets, logits)
-                # Reduce loss across GPUs for each batch
-                loss_tensor = torch.tensor(loss.item(), device=self.device)
-                if dist.is_initialized():
-                    dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
-                epoch_loss += loss_tensor.item() / self.accelerator.num_processes
-
+                    
                 for i, pred_text in enumerate(translated_text):
-                    ref_text = self.tokenizer.decode(targets[i], skip_special_tokens=True)
+                    ref_text = text[i]
                     if step == 0 and i < 2 and self.accelerator.is_main_process:
                         self.logger.info(
                             f"Sample {i} - Predicted: {pred_text[:100]}... | Reference: {ref_text[:100]}...",
@@ -570,11 +568,10 @@ class UniSignTrans:
             avg_bleu[n] = local_bleu_sum_tensor.item() / total_samples if total_samples > 0 else 0.0
 
         # 计算平均损失
-        avg_loss = epoch_loss / len(dataloader) if len(dataloader) > 0 else 0.0
+
 
         # 记录日志
         self.logger.info(
-            f"{mode:<5} Epoch {epoch + 1}, Loss: {avg_loss:.4f}, "
             f"BLEU-1: {avg_bleu.get(1, 0.0):.4f}, BLEU-2: {avg_bleu.get(2, 0.0):.4f}, "
             f"BLEU-3: {avg_bleu.get(3, 0.0):.4f}, BLEU-4: {avg_bleu.get(4, 0.0):.4f}",
             main_process_only=self.accelerator.is_main_process
@@ -582,7 +579,6 @@ class UniSignTrans:
 
         # 返回结果
         return {
-            'loss': avg_loss,
             'bleu_1': avg_bleu.get(1, 0.0),
             'bleu_2': avg_bleu.get(2, 0.0),
             'bleu_3': avg_bleu.get(3, 0.0),
@@ -606,8 +602,10 @@ class UniSignTrans:
             if t.size(0) < max_len else t for t in batch_texts
         ])
 
-        targets = padded_texts[:, 1:]
-        decoder_input_ids = padded_texts[:, :-1]
+        targets = padded_texts[:, 1:].clone()
+        decoder_input_ids = padded_texts[:, :-1].clone()
+        targets[targets == self.tokenizer.pad_token_id] = self.ignore_index
+
         return decoder_input_ids, targets
 
     def compute_translation_loss(self, targets: torch.Tensor, logits: torch.Tensor) -> torch.Tensor:
@@ -619,7 +617,7 @@ class UniSignTrans:
             logits = logits[:, :min_len, :]
             targets = targets[:, :min_len]
 
-        criterion = nn.CrossEntropyLoss(ignore_index=self.tokenizer.pad_token_id)
+        criterion = nn.CrossEntropyLoss(ignore_index=self.ignore_index, reduction='mean')
         logits_flat = logits.reshape(-1, logits.size(-1))
         targets_flat = targets.reshape(-1)
         loss = criterion(logits_flat, targets_flat)
@@ -645,11 +643,11 @@ class UniSignTrans:
 
             if train_loss < self.best_loss and self.accelerator.is_main_process:
                 self.best_loss = train_loss
-                ckpt_path = f"{self.ckpt_dir}/{self.weight_name_prefix}_best.pth"
+                ckpt_path = f"{self.ckpt_dir}/{self.ckpt_name_prefix}_best.pth"
                 self.best_ckpt_path = ckpt_path
                 self.logger.info(f"Best epoch {epoch}: {self.best_loss:.4f}", main_process_only=self.accelerator.is_main_process)
             else:
-                ckpt_path = f"{self.ckpt_dir}/{self.weight_name_prefix}.pth"
+                ckpt_path = f"{self.ckpt_dir}/{self.ckpt_name_prefix}.pth"
                 if self.best_ckpt_path is None:
                     self.best_ckpt_path = ckpt_path
 
@@ -723,17 +721,17 @@ class UniSignTrans:
                     self.logger.warning(f"Val loader sampler is not DistSampler, skipping epoch setting, rank: {self.accelerator.process_index}", main_process_only=self.accelerator.is_main_process)
                 
                 val_metrics = self.evaluate(self.val_loader, epoch, 'val')
-                val_loss_history.append(val_metrics['loss'])
+                # val_loss_history.append(val_metrics['loss'])
                 for n in range(1, 5):
                     bleu_history[n].append(val_metrics[f'bleu_{n}'])
 
             if train_loss < self.best_loss and self.accelerator.is_main_process:
                 self.best_loss = train_loss
-                ckpt_path = f"{self.ckpt_dir}/{self.weight_name_prefix}_best.pth"
+                ckpt_path = f"{self.ckpt_dir}/{self.ckpt_name_prefix}_best.pth"
                 self.best_ckpt_path = ckpt_path
                 self.logger.info(f"Best epoch {epoch}: {self.best_loss:.4f}", main_process_only=self.accelerator.is_main_process)
             else:
-                ckpt_path = f"{self.ckpt_dir}/{self.weight_name_prefix}.pth"
+                ckpt_path = f"{self.ckpt_dir}/{self.ckpt_name_prefix}.pth"
             if self.accelerator.is_main_process:
                 self.save_ckpt(epoch, ckpt_path)
 
@@ -811,6 +809,13 @@ class UniSignTrans:
             )
 
         self.logger.info("Done!", main_process_only=self.accelerator.is_main_process)
+        
+        if self.accelerator.is_main_process and self.debug:
+            ## delete ckpt directory if in debug mode
+            if os.path.exists(self.ckpt_dir):
+                self.logger.info(f"Deleting ckpt directory: {self.ckpt_dir}", main_process_only=self.accelerator.is_main_process)
+                shutil.rmtree(self.ckpt_dir)
+                
         self.cleanup()
 
     def save_ckpt(self, epoch, ckpt_path):
@@ -819,10 +824,10 @@ class UniSignTrans:
         if os.path.exists(ckpt_path):
             os.remove(ckpt_path)
         model_dict = {
-            'UniSignModel': self.UniSignModel.module.state_dict() if isinstance(self.UniSignModel, DDP) else self.UniSignModel.state_dict(),
-            'encoder': self.feature_encoder.state_dict() if self.use_feature_encoder else None,
-            'optimizer_uniSign': self.optimizer_UniSignModel.state_dict(),
-            'optimizer_encoder': self.optimizer_encoder.state_dict() if self.use_feature_encoder else None,
+            'signModel': self.signModel.module.state_dict() if isinstance(self.signModel, DDP) else self.signModel.state_dict(),
+            # 'encoder': self.img_encoder.state_dict() if self.use_img_encoder else None,
+            'optimizer': self.optimizer.state_dict(),
+            # 'optimizer_encoder': self.optimizer_encoder.state_dict() if self.use_img_encoder else None,
             'epoch': epoch,
             'best_loss': self.best_loss,
         }
@@ -842,29 +847,28 @@ class UniSignTrans:
             dist.broadcast_object_list(ckpt_list, src=0)
         ckpt_dict = ckpt_list[0]
 
-        # --- 3. 加载 UniSignModel（DDP 包装时只需主进程加载，但无害于所有进程执行） ---
-        if isinstance(self.UniSignModel, DDP):
-            missing_keys, unexpected_keys = self.UniSignModel.module.load_state_dict(
-                ckpt_dict['UniSignModel'], strict=False)
+        # --- 3. 加载 signModel（DDP 包装时只需主进程加载，但无害于所有进程执行） ---
+        if isinstance(self.signModel, DDP):
+            missing_keys, unexpected_keys = self.signModel.module.load_state_dict(
+                ckpt_dict['signModel'], strict=False)
         else:
-            missing_keys, unexpected_keys = self.UniSignModel.load_state_dict(
-                ckpt_dict['UniSignModel'], strict=False)
+            missing_keys, unexpected_keys = self.signModel.load_state_dict(
+                ckpt_dict['signModel'], strict=False)
 
         if missing_keys or unexpected_keys:
-            self.logger.warning(f"UniSignModel - Missing keys: {missing_keys}, Unexpected keys: {unexpected_keys}", main_process_only=self.accelerator.is_main_process)
+            self.logger.warning(f"signModel - Missing keys: {missing_keys}, Unexpected keys: {unexpected_keys}", main_process_only=self.accelerator.is_main_process)
 
         # --- 4. 所有进程都加载 feature_encoder（非DDP，需要每个进程同步加载） ---
-        if self.use_feature_encoder:
-            missing_keys, unexpected_keys = self.feature_encoder.load_state_dict(
+        if self.use_img_encoder:
+            missing_keys, unexpected_keys = self.img_encoder.load_state_dict(
                 ckpt_dict['encoder'], strict=False)
             if missing_keys or unexpected_keys:
-                self.logger.warning(f"Feature encoder - Missing keys: {missing_keys}, Unexpected keys: {unexpected_keys}", main_process_only=self.accelerator.is_main_process)
+                self.logger.warning(f"Image encoder - Missing keys: {missing_keys}, Unexpected keys: {unexpected_keys}", main_process_only=self.accelerator.is_main_process)
 
         # --- 5. 构建并广播 optimizer 状态（主进程构建） ---
         if self.accelerator.is_main_process and not self.finetune:
             optimizer_states = {
-                'optimizer_uniSign': ckpt_dict['optimizer_uniSign'],
-                'optimizer_encoder': ckpt_dict['optimizer_encoder'] if self.use_feature_encoder else None,
+                'optimizer': ckpt_dict['optimizer'],
                 'start_epoch': ckpt_dict['epoch'],
                 'best_loss': ckpt_dict.get('best_loss', float('inf'))
             }
@@ -879,9 +883,8 @@ class UniSignTrans:
 
         # --- 6. 所有进程加载 optimizer 状态和 epoch 等元数据 ---
         if not self.finetune:
-            self.optimizer_UniSignModel.load_state_dict(optimizer_states['optimizer_uniSign'])
-            if self.use_feature_encoder and optimizer_states['optimizer_encoder']:
-                self.optimizer_encoder.load_state_dict(optimizer_states['optimizer_encoder'])
+            self.optimizer.load_state_dict(optimizer_states['optimizer'])
+
 
             self.start_epoch = optimizer_states['epoch']
             self.best_loss = optimizer_states['best_loss']
@@ -900,10 +903,10 @@ class UniSignTrans:
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--debug", default=arg_settings["debug"], action="store_true", help="Debug mode")
-    parser.add_argument("--model_name", type=str, default='uniSign', help="Model name")
+    parser.add_argument("--model_name", type=str, default=arg_settings["model_name"], help="Model name")
     parser.add_argument("--resume", type=str, default=arg_settings["resume"], help="Resume training from a checkpoint")
     parser.add_argument("--dataset_name", type=str, default=arg_settings["dataset_name"], help="Dataset name")
-    parser.add_argument("--feature_encoder", type=str, default=arg_settings["feature_encoder"], help="Feature encoder name")
+    parser.add_argument("--img_encoder", type=str, default=arg_settings["img_encoder"], help="image encoder name")
     parser.add_argument("--modality", type=str, default=arg_settings["modality"], help="Modality, e.g., rgb, pose, rgb_pose")
     parser.add_argument("--finetune", default=arg_settings["finetune"], action="store_true", help="Fine-tune the model")
     parser.add_argument("--n_frames", type=int, default=arg_settings["n_frames"], help="Number of frames")
@@ -912,12 +915,13 @@ def get_args():
     parser.add_argument("--max_epochs", type=int, default=arg_settings["max_epochs"], help="Maximum number of epochs") 
     parser.add_argument("--freeze_llm", default=arg_settings["freeze_llm"], action="store_true", help="Freeze the LLM during training")  
     parser.add_argument("--pose_set", type=str, default=arg_settings["pose_set"], help="Pose set to use, e.g., hand_body, body, hand")
+    parser.add_argument("--llm_name", type=str, default=arg_settings["llm_name"], help="LLM name for translation")
 
     return parser.parse_args()
 
 if __name__ == '__main__':
     mp.set_start_method("spawn", force=True)
     args = get_args()
-    uniSignTrans = UniSignTrans(args)
-    uniSignTrans.run_all()
-    # uniSignTrans.run_training_only()
+    signTrans = SignTrans(args)
+    signTrans.run_all()
+    # signTrans.run_training_only()

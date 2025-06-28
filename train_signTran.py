@@ -70,8 +70,8 @@ from transformers.modeling_outputs import BaseModelOutput
 
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 
-from network.uni_sign_network import UniSignNetwork
-from network.feature_encoder import get_encoder
+from network.uniSign.uni_sign_network import UniSignNetwork
+from network.uniSign.feature_encoder import get_encoder
 from transformers import MBartTokenizer, MBartForConditionalGeneration
 from dataloader.dataloader import get_dataloader
 from utils.mediapipe_kpts_mapping import MediapipeKptsMapping
