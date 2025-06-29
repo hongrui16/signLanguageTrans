@@ -36,6 +36,9 @@ class How2SignOpenPose(Dataset):
         self.debug = debug
         self.sentence_csv = pd.read_csv(sentence_csv_path, sep='\t' if '\t' in open(sentence_csv_path).readline() else ',')
         
+        pose_seq_len = kwargs.get('pose_seq_len', 90)  # Default for YouTubeASL
+        num_frame_seq = kwargs.get('frame_seq_len', 30)  # Default for
+
 
         self.kpts_json_dir = kpts_json_dir
         self.video_dir = video_dir

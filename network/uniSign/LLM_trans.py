@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+from typing import List, Tuple
+
 from transformers import AutoModel, AutoTokenizer, AutoModelForSeq2SeqLM
 
 class SignLanguageLLM(nn.Module):
@@ -14,16 +16,7 @@ class SignLanguageLLM(nn.Module):
         
         freeze_llm = kwargs.get("freeze_llm", False)
         logger = kwargs.get("logger", None)
-        pose_set = kwargs.get("pose_set", 'hand_body')
-        if 'face' in pose_set:
-            input_dim = 1024
-        elif 'hand' in pose_set and 'body' in pose_set:
-            input_dim = 768
-        elif 'hand' in pose_set:
-            input_dim = 512  # Default for hand only or body only
-        else:
-            raise ValueError(f"Unsupported pose_set: {pose_set}. Must include 'hand', 'body', or 'face'.")
-            
+
         
         self.tokenizer = AutoTokenizer.from_pretrained(
                 model_name,
@@ -34,13 +27,9 @@ class SignLanguageLLM(nn.Module):
         self.model = AutoModelForSeq2SeqLM.from_pretrained(model_name)  # Use Seq2SeqLM version
 
         # 解决 vocab size 不匹配的问题
-        self.model.config.vocab_size = self.tokenizer.vocab_size
-        self.model.resize_token_embeddings(self.tokenizer.vocab_size)
+        # self.model.config.vocab_size = self.tokenizer.vocab_size
+        # self.model.resize_token_embeddings(self.tokenizer.vocab_size)
 
-
-        # Linear layer to map 4C -> LLM embedding dim
-        self.fc = nn.Linear(input_dim, self.model.config.hidden_size)  # hidden_size = 1024 for mbart-large-50
-        self.norm = nn.LayerNorm(self.model.config.hidden_size)  # 添加归一化
         self.decoder_start_token_id = self.tokenizer.lang_code_to_id["en_XX"]
         if logger is not None:
             logger.info(f"Using model: {model_name}")
@@ -76,9 +65,6 @@ class SignLanguageLLM(nn.Module):
 
         batch_size, T, C = sign_features.shape
 
-        # 1️ Project to LLM dimension
-        sign_features = self.fc(sign_features)  # (batch_size, T, LLM_dim)
-        sign_features = self.norm(sign_features)  # 添加归一化
 
         if attention_mask is None:
             attention_mask = torch.ones(batch_size, T).to(sign_features.device)

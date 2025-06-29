@@ -78,36 +78,17 @@ def get_encoder(encoder_name, device):
     if encoder_name == 'resnet50':
         # self.feature_encoder = torch.hub.load('pytorch/vision:v0.10.0', 'resnet50', pretrained=True)
         feature_encoder = models.resnet50(pretrained=True)
-                    # 去掉全局平均池化和全连接层
         # self.feature_encoder.avgpool = torch.nn.Identity()
         feature_encoder.fc = torch.nn.Identity() #  # (batch_size, 2048, 8, 8) with input (batch_size, 3, 256, 256) and no pooling layer； (batch_size, 2048, 1, 1) with input (batch_size, 3, 224, 224) and pooling layer
-
-        # Define a custom forward pass to avoid implicit reshaping
-        def custom_forward(x):
-            x = feature_encoder.conv1(x)
-            x = feature_encoder.bn1(x)
-            x = feature_encoder.relu(x)
-            x = feature_encoder.maxpool(x)
-
-            x = feature_encoder.layer1(x)
-            x = feature_encoder.layer2(x)
-            x = feature_encoder.layer3(x)
-            x = feature_encoder.layer4(x)
-            
-            # Global average pooling
-            x = feature_encoder.avgpool(x) ## (batch_size, 2048, 1, 1)
-            # squeeze the 2nd and 3rd dimensions
-            x = torch.squeeze(x, 3)
-            x = torch.squeeze(x, 2)
-            
-            # Return feature vector after avgpool (2048-dimensional vector per sample)
-            return x
-
-        # Replace the default forward pass
-        feature_encoder.forward = custom_forward
-
         encoder_output_size = 2048
         feature_encoder.to(device)
+        
+    elif encoder_name == 'resnet34':
+        feature_encoder = models.resnet34(pretrained=True)
+        feature_encoder.fc = torch.nn.Identity()
+        feature_encoder.to(device)
+        encoder_output_size = 512  # ResNet-34 output size after removing avgpool
+        
     elif encoder_name == 'dinov2_vits14':
         feature_encoder = DINOv2FeatureEncoder(encoder_name='dinov2_vits14', use_patch_tokens=True, device=device)
         encoder_output_size = feature_encoder.output_dim

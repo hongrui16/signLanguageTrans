@@ -60,25 +60,35 @@ class SignTrans:
         self.model_name = args.model_name
         self.resume_path = args.resume
         self.dataset_name = args.dataset_name
-        self.img_encoder_name = args.img_encoder
+        self.img_encoder_name = args.img_encoder_name
         self.modality = args.modality
         self.finetune = args.finetune
-        self.n_frames = args.n_frames
         self.train_batch_size  = args.train_batch_size
         self.max_epochs = args.max_epochs
         self.img_size = args.img_size
         self.pose_set = args.pose_set
         self.llm_name = args.llm_name
         self.freeze_llm = args.freeze_llm
+        self.num_pose_seq = args.num_pose_seq
+        self.num_frame_seq = args.num_frame_seq
+        self.delete_blury_frames = args.delete_blury_frames
+        self.freeze_llm_at_early_epochs = args.freeze_llm_at_early_epochs
+        self.use_mini_dataset = args.use_mini_dataset
+        
         
         self.ignore_index = -100 # Used for ignoring padding tokens in loss computation
         
-        assert self.modality in ['pose', 'rgb', 'pose_rgb'], f"Unsupported modality: {self.modality}"
+        assert self.modality in ['pose', 'rgb', 'pose_rgb', 'rgb_pose'], f"Unsupported modality: {self.modality}"
         
-        if self.modality == 'pose':
-            self.use_img_encoder = False
+        if 'rgb' in self.modality:      
+            self.use_img_encoder = True
         else:
-            self.use_img_encoder = True 
+            self.use_img_encoder = False 
+            
+        if 'pose' in self.modality:
+            self.use_pose = True
+        else:
+            self.use_pose = False
 
         time_stamp = kwargs.get('time_stamp', datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
         slurm_job_id = kwargs.get('slurm_job_id', os.environ.get('SLURM_JOB_ID', '0'))
@@ -171,12 +181,15 @@ class SignTrans:
             debug=self.debug,
             batch_size=self.train_batch_size,
             modality=self.modality,
-            n_frames=self.n_frames,
             distributed=distributed,
             world_size=self.accelerator.num_processes,
             rank=self.accelerator.process_index,
             split = 'train',
             img_size=self.img_size,
+            num_pose_seq=self.num_pose_seq,
+            num_frame_seq=self.num_frame_seq,
+            delete_blury_frames=self.delete_blury_frames,
+            use_mini_dataset = self.use_mini_dataset,
         )
         
         val_loader, val_dataset, self.val_sampler = None, None, None
@@ -190,12 +203,14 @@ class SignTrans:
             debug=self.debug,
             batch_size=self.train_batch_size,
             modality=self.modality,
-            n_frames=self.n_frames,
             distributed=distributed,
             world_size=self.accelerator.num_processes,
             rank=self.accelerator.process_index,
             split = val_split,
             img_size=self.img_size,
+            num_pose_seq=self.num_pose_seq,
+            num_frame_seq=self.num_frame_seq,
+            delete_blury_frames=self.delete_blury_frames,
         )
 
         test_loader, test_dataset, self.test_sampler = None, None, None
@@ -207,7 +222,6 @@ class SignTrans:
         #     debug=self.debug,
         #     batch_size=self.train_batch_size,
         #     modality=self.modality,
-        #     n_frames=self.n_frames,
         #     distributed=distributed,
         #     world_size=self.accelerator.num_processes,
         #     rank=self.accelerator.process_index,
@@ -249,9 +263,9 @@ class SignTrans:
         # Log sample batch shapes
         for batch in self.train_loader:
             frames_tensor, text, keypoints_dict = batch
-            face_keypoints = keypoints_dict['face'].to(self.device).float()
-            body_keypoints = keypoints_dict['body'].to(self.device).float()
-            hand_keypoints = keypoints_dict['hand'][:, :, :21, :].to(self.device).float()
+            face_keypoints = keypoints_dict['face']
+            body_keypoints = keypoints_dict['body']
+            hand_keypoints = keypoints_dict['hand']
             self.logger.info(f"hand_keypoints Shape: {hand_keypoints.shape}", main_process_only=self.accelerator.is_main_process)
             self.logger.info(f"body_keypoints Shape: {body_keypoints.shape}", main_process_only=self.accelerator.is_main_process)
             self.logger.info(f"face_keypoints Shape: {face_keypoints.shape}", main_process_only=self.accelerator.is_main_process)
@@ -260,10 +274,10 @@ class SignTrans:
             break
 
         if self.use_img_encoder:
-            self.img_encoder, encoder_output_size = get_encoder(self.img_encoder_name, self.device)
+            self.img_encoder, encoder_output_dim = get_encoder(self.img_encoder_name, self.device)
             
         else:
-            encoder_output_size = 0
+            encoder_output_dim = 0
             self.img_encoder = None
 
         self.hand_mapping = MediapipeKptsMapping.hand_keypoints_mapping
@@ -282,14 +296,19 @@ class SignTrans:
         }
 
         input_dim = 0
-        if 'face' in self.pose_set:
-            input_dim += len(self.face_indices) * 2
-        if 'body' in self.pose_set:
-            input_dim += len(self.body_indices) * 2
-        if 'hand' in self.pose_set:
-            input_dim += len(self.hand_indices) * 4
+        if self.use_pose:
+            if 'face' in self.pose_set:
+                input_dim += len(self.face_indices) * 2
+            if 'body' in self.pose_set:
+                input_dim += len(self.body_indices) * 2
+            if 'hand' in self.pose_set:
+                input_dim += len(self.hand_indices) * 2 * 2
+                
+        if self.use_img_encoder:
+            input_dim += encoder_output_dim
         
-
+        self.logger.info(f"Input dimension for model: {input_dim}", main_process_only=self.accelerator.is_main_process)
+        
         self.logger.info("Tokenizer loaded.", main_process_only=self.accelerator.is_main_process)
         if self.model_name == 'YouTubeASLBaseline':
             self.signModel = YouTubeASLBaseline(
@@ -297,6 +316,7 @@ class SignTrans:
                 device=self.device,
                 freeze_llm=self.freeze_llm,
                 llm_name=self.llm_name,
+                modality=self.modality,
             )
             self.tokenizer = self.signModel.tokenizer
             self.logger.info(f"Tokenizer vocab size: {self.tokenizer.vocab_size}", main_process_only=self.accelerator.is_main_process)
@@ -305,6 +325,7 @@ class SignTrans:
                                             device=self.device,
                                             freeze_llm = self.freeze_llm,
                                             llm_name=self.llm_name,
+                                            modality=self.modality,
                                             )
             self.tokenizer = self.signModel.llm_trans.tokenizer
             self.logger.info(f"Tokenizer vocab size: {self.tokenizer.vocab_size}", main_process_only=self.accelerator.is_main_process)
@@ -324,8 +345,8 @@ class SignTrans:
 
         if self.use_img_encoder:
             self.img_encoder.to(self.device)
-            self.optimizer_encoder = torch.optim.Adam(self.img_encoder.parameters(), lr=2e-4)
-            self.optimizer_encoder = self.accelerator.prepare(self.optimizer_encoder)
+            # self.optimizer_encoder = torch.optim.Adam(self.img_encoder.parameters(), lr=2e-4)
+            # self.optimizer_encoder = self.accelerator.prepare(self.optimizer_encoder)
             self.accelerator.prepare(self.img_encoder)
 
         if self.resume_path is not None:
@@ -359,6 +380,20 @@ class SignTrans:
             self.logger.warning(f"Train loader sampler is not DistributedSampler, skipping epoch setting, rank: {self.accelerator.process_index}", main_process_only=self.accelerator.is_main_process)
 
         self.signModel.train()
+        
+        # if isinstance(self.signModel, DDP):
+        #     parameters = self.signModel.module.llm_model.model.parameters() if hasattr(self.signModel.module, 'model') else self.signModel.module.llm_model.parameters()
+        # else:
+        #     parameters = self.signModel.llm_model.model.parameters() if hasattr(self.signModel, 'model') else self.signModel.llm_model.parameters()
+        # if epoch < self.freeze_llm_at_early_epochs:
+        #     self.logger.info(f"Epoch {epoch}; Freezing LLM parameters before epoch {self.freeze_llm_at_early_epochs}", main_process_only=self.accelerator.is_main_process)
+        #     for param in parameters:
+        #         param.requires_grad = False 
+        # else:
+        #     self.logger.info(f"Epoch {epoch}; Unfreezing LLM parameters after epoch {self.freeze_llm_at_early_epochs}", main_process_only=self.accelerator.is_main_process)
+        #     for param in parameters:
+        #         param.requires_grad = True
+                
         if self.use_img_encoder:
             self.img_encoder.train()
 
@@ -383,19 +418,27 @@ class SignTrans:
                 progress_bar.update(step_interval)
 
             frames_tensor, text, keypoints_dict = batch
-            # Move all tensors to the correct device
-            hand_keypoints = keypoints_dict['hand'].to(self.device).float()
-            body_keypoints = keypoints_dict['body'].to(self.device).float()
-            if 'face' in self.pose_set:
-                face_keypoints = keypoints_dict['face'].to(self.device).float()
+            if self.use_pose:
+                # Move all tensors to the correct device
+                hand_keypoints = keypoints_dict['hand'].to(self.device).float()
+                body_keypoints = keypoints_dict['body'].to(self.device).float()
+                face_keypoints = keypoints_dict['face'].to(self.device).float()                    
+                # print("hand_keypoints shape:", hand_keypoints.shape)
+                right_hand_keypoints = hand_keypoints[:, :, :21, :].float()
+                left_hand_keypoints = hand_keypoints[:, :, 21:, :].float()
             else:
+                right_hand_keypoints = None
+                left_hand_keypoints = None
+                body_keypoints = None
                 face_keypoints = None
-                
-            right_hand_keypoints = hand_keypoints[:, :, :21, :].float()
-            left_hand_keypoints = hand_keypoints[:, :, 21:, :].float()
             if self.use_img_encoder:
                 frames_tensor = frames_tensor.to(self.device).float()
-
+                B, T, C, H, W = frames_tensor.shape
+                frames_tensor = frames_tensor.reshape(B * T, C, H, W)  # Flatten batch and time dimensions
+                frame_feat = self.img_encoder(frames_tensor)
+                frame_feat = frame_feat.reshape(B, T, -1)  # Reshape back to (B, T, feature_dim)
+            else:
+                frame_feat = None
             decoder_input_ids, targets = self.encode_text(text)
             # print("decoder_input_ids min:", decoder_input_ids.min().item())
             # print("decoder_input_ids max:", decoder_input_ids.max().item())
@@ -406,6 +449,7 @@ class SignTrans:
                     right_hand_keypoints,
                     body_keypoints,
                     face_keypoints,
+                    frame_feat=frame_feat,
                     decoder_input_ids=decoder_input_ids
                 )
                 loss = self.compute_translation_loss(targets, logits)
@@ -413,9 +457,9 @@ class SignTrans:
 
                 self.optimizer.step()
                 self.optimizer.zero_grad()
-                if self.use_img_encoder:
-                    self.optimizer_encoder.step()
-                    self.optimizer_encoder.zero_grad()
+                # if self.use_img_encoder:
+                #     self.optimizer_encoder.step()
+                #     self.optimizer_encoder.zero_grad()
 
                 # Reduce loss across GPUs for each batch
                 loss_tensor = torch.tensor(loss.item(), device=self.device)
@@ -465,7 +509,6 @@ class SignTrans:
         if self.use_img_encoder:
             self.img_encoder.eval()
 
-        epoch_loss = 0
         bleu_scores = {1: [], 2: [], 3: [], 4: []}
         smoothing = SmoothingFunction().method1
 
@@ -491,16 +534,27 @@ class SignTrans:
                     progress_bar.update(step_interval)
 
                 frames_tensor, text, keypoints_dict = batch
-                # Move all tensors to the correct device
-                hand_keypoints = keypoints_dict['hand'].to(self.device).float()
-                body_keypoints = keypoints_dict['body'].to(self.device).float()
-                if 'face' in self.pose_set:
-                    face_keypoints = keypoints_dict['face'].to(self.device).float()
+                if self.use_pose:
+                    # Move all tensors to the correct device
+                    hand_keypoints = keypoints_dict['hand'].to(self.device).float()
+                    body_keypoints = keypoints_dict['body'].to(self.device).float()
+                    face_keypoints = keypoints_dict['face'].to(self.device).float()                    
+                    # print("hand_keypoints shape:", hand_keypoints.shape)
+                    right_hand_keypoints = hand_keypoints[:, :, :21, :].float()
+                    left_hand_keypoints = hand_keypoints[:, :, 21:, :].float()
                 else:
+                    right_hand_keypoints = None
+                    left_hand_keypoints = None
+                    body_keypoints = None
                     face_keypoints = None
-                right_hand_keypoints = hand_keypoints[:, :, :21, :].float()
-                left_hand_keypoints = hand_keypoints[:, :, 21:, :].float()
-
+                if self.use_img_encoder:
+                    frames_tensor = frames_tensor.to(self.device).float()
+                    B, T, C, H, W = frames_tensor.shape
+                    frames_tensor = frames_tensor.reshape(B * T, C, H, W)  # Flatten batch and time dimensions
+                    frame_feat = self.img_encoder(frames_tensor)
+                    frame_feat = frame_feat.reshape(B, T, -1)  # Reshape back to (B, T, feature_dim)
+                else:
+                    frame_feat = None
 
                 decoder_input_ids, targets = self.encode_text(text)
                 translated_text, encoder_hidden = self.signModel(
@@ -508,6 +562,7 @@ class SignTrans:
                     right_hand_keypoints,
                     body_keypoints,
                     face_keypoints,
+                    frame_feat=frame_feat,
                     split=mode,
                     decoder_input_ids=decoder_input_ids
                 )
@@ -754,7 +809,7 @@ class SignTrans:
                 plt.close()
                 self.logger.info(f"Saving loss curve to: {loss_curve_filepath}", main_process_only=self.accelerator.is_main_process)
 
-                if val_loss_history:
+                if bleu_history[1]:
                     if os.path.exists(bleu_curve_filepath):
                         os.remove(bleu_curve_filepath)
                     fig, ax = plt.subplots(1, 1, figsize=(8, 6))
@@ -906,17 +961,21 @@ def get_args():
     parser.add_argument("--model_name", type=str, default=arg_settings["model_name"], help="Model name")
     parser.add_argument("--resume", type=str, default=arg_settings["resume"], help="Resume training from a checkpoint")
     parser.add_argument("--dataset_name", type=str, default=arg_settings["dataset_name"], help="Dataset name")
-    parser.add_argument("--img_encoder", type=str, default=arg_settings["img_encoder"], help="image encoder name")
     parser.add_argument("--modality", type=str, default=arg_settings["modality"], help="Modality, e.g., rgb, pose, rgb_pose")
     parser.add_argument("--finetune", default=arg_settings["finetune"], action="store_true", help="Fine-tune the model")
-    parser.add_argument("--n_frames", type=int, default=arg_settings["n_frames"], help="Number of frames")
     parser.add_argument("--train_batch_size", type=int, default=arg_settings["train_batch_size"], help="Batch size")
     parser.add_argument("--img_size", type=tuple, default=arg_settings["img_size"], help="Image size for input")
     parser.add_argument("--max_epochs", type=int, default=arg_settings["max_epochs"], help="Maximum number of epochs") 
     parser.add_argument("--freeze_llm", default=arg_settings["freeze_llm"], action="store_true", help="Freeze the LLM during training")  
     parser.add_argument("--pose_set", type=str, default=arg_settings["pose_set"], help="Pose set to use, e.g., hand_body, body, hand")
     parser.add_argument("--llm_name", type=str, default=arg_settings["llm_name"], help="LLM name for translation")
-
+    parser.add_argument("--img_encoder_name", type=str, default=arg_settings["img_encoder_name"], help="Name of the image encoder")
+    parser.add_argument("--num_pose_seq", type=int, default=arg_settings["num_pose_seq"], help="Number of pose sequences")
+    parser.add_argument("--num_frame_seq", type=int, default=arg_settings["num_frame_seq"], help="Number of frames squences")
+    #delete_blury_frames
+    parser.add_argument("--delete_blury_frames", default=arg_settings["delete_blury_frames"], action="store_true", help="Delete blurry frames")
+    parser.add_argument("--freeze_llm_at_early_epochs", default=arg_settings["freeze_llm_at_early_epochs"], help="Freeze the LLM at early epochs")
+    parser.add_argument("--use_mini_dataset", default=arg_settings["use_mini_dataset"], action="store_true", help="Use a mini dataset for debugging")
     return parser.parse_args()
 
 if __name__ == '__main__':

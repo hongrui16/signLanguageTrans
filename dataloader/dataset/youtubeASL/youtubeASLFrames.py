@@ -17,7 +17,7 @@ if __name__ == '__main__':
 from utils.mediapipe_kpts_mapping import MediapipeKptsMapping
 
 class YouTubeASLFrames(Dataset):
-    def __init__(self, clip_frame_dir: str, clip_anno_dir: str, num_frames_per_clip: int = 15, **kwargs):
+    def __init__(self, clip_frame_dir: str, clip_anno_dir: str, **kwargs):
         """
         Initialize the YouTube ASL dataset loader for pre-processed frames.
         
@@ -29,13 +29,16 @@ class YouTubeASLFrames(Dataset):
         """
         self.clip_frame_dir = clip_frame_dir
         self.clip_anno_dir = clip_anno_dir
-        self.num_frames_per_clip = num_frames_per_clip
+
         self.debug = kwargs.get('debug', False)
         self.logger = kwargs.get('logger', None)
         
         self.load_frame = kwargs.get('load_frame', False)
         
         self.frame_size = kwargs.get('frame_size', (224, 224))
+
+        pose_seq_len = kwargs.get('pose_seq_len', 90)  # Default for YouTubeASL
+        num_frame_seq = kwargs.get('frame_seq_len', 30)  # Default for
 
         
         self.hand_mapping = MediapipeKptsMapping.hand_keypoints_mapping

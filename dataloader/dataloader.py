@@ -22,7 +22,6 @@ def get_dataloader(
     dataset_name = None,
     logger=None,
     debug=False,
-    n_frames=30,
     distributed=False,
     world_size=1,
     rank=0,
@@ -32,6 +31,13 @@ def get_dataloader(
     batch_size = kwargs.get('batch_size', 32)
     modality = kwargs.get('modality', 'pose')
     img_size = kwargs.get('img_size', (224, 224))
+    # num_pose_seq=self.num_pose_seq,
+    # num_frame_seq=self.num_frame_seq,
+    num_pose_seq = kwargs.get('num_pose_seq', 90)  # Default for YouTubeASL
+    num_frame_seq = kwargs.get('num_frame_seq', 30)  # Default for
+    delete_blury_frames = kwargs.get('delete_blury_frames', False)  # Default for YouTubeASL
+    use_mini_dataset = kwargs.get('use_mini_dataset', False)  # Default for debugging
+    
     # Log distributed training configuration
     if logger is not None:
         logger.info(f"Dataset: {dataset_name}, Distributed {split}: {distributed}, World size: {world_size}, Rank: {rank}", main_process_only=True)
@@ -62,34 +68,43 @@ def get_dataloader(
                 logger=logger,
                 modality=modality,
                 img_size=img_size,
+                num_pose_seq = num_pose_seq,
+                num_frame_seq = num_frame_seq,
+                delete_blury_frames = delete_blury_frames,
             )
         elif dataset_name == 'YouTubeASLFrames':
             dataset = YouTubeASLFrames(
                 clip_frame_dir='/scratch/rhong5/dataset/youtubeASL_frames',
                 clip_anno_dir='/scratch/rhong5/dataset/youtubeASL_anno',
-                num_frames_per_clip=n_frames,
                 debug=debug,
                 logger=logger,
                 modality = modality,
                 img_size=img_size,
+                num_pose_seq = num_pose_seq,
+                num_frame_seq = num_frame_seq,
+                delete_blury_frames = delete_blury_frames,
             )
         elif dataset_name == 'YouTubeASLOnlineDet':
             video_dir = '/projects/kosecka/hongrui/dataset/youtubeASL/youtube_ASL/'
             dataset = YouTubeASLOnlineDet(
                 video_dir = video_dir,
-                num_frames_per_clip=n_frames,
                 debug=debug,
                 modality = modality,
                 img_size=img_size,
                 logger=logger,
+                num_pose_seq = num_pose_seq,
+                num_frame_seq = num_frame_seq,
+                delete_blury_frames = delete_blury_frames,
             )
         elif dataset_name == 'YouTubeASLFramesComposed':
             dataset = YouTubeASLFramesComposed(
-                num_frames_per_clip=n_frames,
                 debug=debug,
                 modality = modality,
                 img_size=img_size,
                 logger=logger,
+                num_pose_seq = num_pose_seq,
+                num_frame_seq = num_frame_seq,
+                delete_blury_frames = delete_blury_frames,
             )
         else:
             raise ValueError(f"Unsupported dataset: {dataset_name}")
@@ -105,20 +120,26 @@ def get_dataloader(
                 sentence_csv_path,
                 kpts_json_dir,
                 video_dir,
-                n_frames=n_frames,
                 debug=debug,
                 modality=modality,
                 img_size=img_size,
                 logger=logger,
+                pose_seq_len = num_pose_seq,
+                frame_seq_len = num_frame_seq,
+                delete_blury_frames = delete_blury_frames,
+
             )
         elif dataset_name == 'How2SignNaive':
             dataset = How2SignNaive(
                 split,
-                num_frames_per_clip=n_frames,
                 debug=debug,
                 modality=modality,
                 logger=logger,
                 img_size=img_size,
+                pose_seq_len = num_pose_seq,
+                frame_seq_len = num_frame_seq,
+                delete_blury_frames = delete_blury_frames,
+                use_mini_dataset = use_mini_dataset,
             )
 
     else:

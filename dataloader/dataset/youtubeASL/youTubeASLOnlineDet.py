@@ -17,8 +17,7 @@ if __name__ == '__main__':
 from utils.mediapipe_kpts_mapping import MediapipeKptsMapping
 
 class YouTubeASLOnlineDet(Dataset):
-    def __init__(self, video_dir: str = None, num_frames_per_clip: int = 200, 
-                 target_img_size = (224, 224), debug = False, return_frame = False,
+    def __init__(self, video_dir: str = None,  target_img_size = (224, 224), debug = False, return_frame = False,
                  **kwargs):
         """
         Initialize the YouTube ASL dataset loader for a single video and VTT files.
@@ -31,10 +30,13 @@ class YouTubeASLOnlineDet(Dataset):
         self.video_dir = video_dir if video_dir is not None else '/projects/kosecka/hongrui/dataset/youtubeASL/youtube_ASL/'
         if not os.path.exists(self.video_dir):
             raise FileNotFoundError(f"Directory not found: {self.video_dir}")
-        self.num_frames_per_clip = num_frames_per_clip
+
         self.target_img_size = target_img_size
         self.debug = debug
         self.return_frame = return_frame  # 是否返回frame
+        
+        pose_seq_len = kwargs.get('pose_seq_len', 90)  # Default for YouTubeASL
+        num_frame_seq = kwargs.get('frame_seq_len', 30)  # Default for
 
         self.keypoints_threshold = 0.3
         self.anno_file = '/projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_annotation.txt'

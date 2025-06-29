@@ -1,8 +1,14 @@
 import torch
 import torch.nn as nn
 import numpy as np
+import os, sys
 
 
+if __name__ == "__main__":
+    project_root = os.path.abspath(os.path.join(__file__, "../../.."))
+    # print(f"Project root: {project_root}")
+    sys.path.append(project_root)
+    
 from network.uniSign.pose_encoder import PoseEncoder
 from network.uniSign.feature_aggregator import feature_aggretate
 from network.uniSign.LLM_trans import SignLanguageLLM
@@ -18,7 +24,7 @@ class UniSignNetwork(nn.Module):
 
         self.device = device
         freeze_llm = kwargs.get("freeze_llm", False)
-        pose_set = kwargs.get("pose_set", 'hand_body')
+        pose_set = kwargs.get("pose_set", 'hand_body_face')
         llm_name = kwargs.get("llm_name", "mbart-large-50")  # Default to MBart50
         self.llm_name = llm_name
 
@@ -41,17 +47,25 @@ class UniSignNetwork(nn.Module):
         self.temporal_encoder_lh = STGCNTemporalEncoder(in_features=256, out_dim=hidden_dim, adj=hand_adj_matrix)
         self.temporal_encoder_rh = STGCNTemporalEncoder(in_features=256, out_dim=hidden_dim, adj=hand_adj_matrix)
         self.temporal_encoder_body = STGCNTemporalEncoder(in_features=256, out_dim=hidden_dim, adj=body_adj_matrix)
+        ratio = 3
         
         if 'face' in pose_set:
             # If face is included in the pose set, use the face encoder            
             self.pose_encoder_face = PoseEncoder(kpts_dim, face_adj_matrix)
             self.temporal_encoder_face = STGCNTemporalEncoder(in_features=256, out_dim=hidden_dim, adj=face_adj_matrix)
+            ratio += 1
 
 
     
-        self.llm_trans = SignLanguageLLM(llm_name, freeze_llm = freeze_llm)
+        self.llm_model = SignLanguageLLM(llm_name, freeze_llm = freeze_llm)
 
-    def forward(self, lh, rh, body, face = None, split = 'train', decoder_input_ids = None):
+        # Linear layer to map 4C -> LLM embedding dim
+        self.projector = nn.Linear(hidden_dim*ratio, self.llm_model.model.config.hidden_size)  # hidden_size = 1024 for mbart-large-50
+        self.norm = nn.LayerNorm(self.llm_model.model.config.hidden_size)  # 添加归一化
+        
+        
+        
+    def forward(self, lh = None, rh = None, body = None, face = None, frame_feat = None, split = 'train', decoder_input_ids = None):
         """
         Args:
             lh, rh, body, face: (batch_size, T, N, C) - Pose inputs
@@ -77,8 +91,14 @@ class UniSignNetwork(nn.Module):
             face_features = self.temporal_encoder_face(face_features)
             sign_features = feature_aggretate(lh_features, rh_features, body_features, face_features)
 
+        # print(f"sign_features shape: {sign_features.shape}")  # Debugging line
+        #  Project to LLM dimension
+        sign_features = self.projector(sign_features)  # (batch_size, T, LLM_dim)
+        sign_features = self.norm(sign_features)  # 添加归一化
+
+
         # LLM Translation
-        return self.llm_trans(sign_features, mode = split, decoder_input_ids = decoder_input_ids)  # LLM output embeddings
+        return self.llm_model(sign_features, mode = split, decoder_input_ids = decoder_input_ids)  # LLM output embeddings
 
 
 # from sacrebleu import corpus_bleu
@@ -93,23 +113,27 @@ class UniSignNetwork(nn.Module):
 
 
 if __name__ == "__main__":
-    batch_size = 4
+    batch_size = 1
     seq_length = 16
-    kpts_dim = 3
+    kpts_dim = 2
 
     num_keypoints = {"lh": 21, "rh": 21, "body": 9, "face": 18}
 
-    adj_lh = torch.eye(num_keypoints["lh"])
-    adj_rh = torch.eye(num_keypoints["rh"])
-    adj_body = torch.eye(num_keypoints["body"])
-    adj_face = torch.eye(num_keypoints["face"])
+    # adj_lh = torch.eye(num_keypoints["lh"])
+    # adj_rh = torch.eye(num_keypoints["rh"])
+    # adj_body = torch.eye(num_keypoints["body"])
+    # adj_face = torch.eye(num_keypoints["face"])
 
-    model = UniSignNetwork(num_keypoints)
+    model = UniSignNetwork(kpts_dim)
 
     lh = torch.rand(batch_size, seq_length, num_keypoints["lh"], kpts_dim)
     rh = torch.rand(batch_size, seq_length, num_keypoints["rh"], kpts_dim)
     body = torch.rand(batch_size, seq_length, num_keypoints["body"], kpts_dim)
     face = torch.rand(batch_size, seq_length, num_keypoints["face"], kpts_dim)
+    
+    print("Input Shapes:", lh.shape, rh.shape, body.shape, face.shape)
 
-    output = model(lh, rh, body, face, adj_lh, adj_rh, adj_body, adj_face)
-    print("LLM Output Shape:", output.shape)
+    output = model(lh, rh, body, face, split = 'test')
+    text_translated, encoder_hidden = output
+    print("encoder_hidden Shape:", encoder_hidden.shape)
+    print("text_translated:", text_translated)
