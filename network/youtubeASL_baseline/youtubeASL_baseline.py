@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config
 from transformers import MBartForConditionalGeneration, MBart50TokenizerFast
+from torch.nn.parallel import DistributedDataParallel as DDP
+from peft import PeftModelForSeq2SeqLM
 
 
 class TemporalEncoder(nn.Module):
@@ -20,29 +22,57 @@ class TemporalEncoder(nn.Module):
         # x: [B, T, D]
         return self.encoder(x)
 
+
+def get_mbart_encoder(llm_model):
+    # 1. unwrap DDP
+    if isinstance(llm_model, DDP):
+        llm_model = llm_model.module
+
+    # 2. LoRA-wrapped model (PeftModelForSeq2SeqLM)
+    if isinstance(llm_model, PeftModelForSeq2SeqLM):
+        base_model = llm_model.base_model # peft.tuners.lora.model.LoraModel            
+        if hasattr(base_model, "model"):
+            if isinstance(base_model.model, MBartForConditionalGeneration):
+                return base_model.model.get_encoder()
+        else:
+            raise AttributeError(f"LoRA base_model.model is not MBartForConditionalGeneration. Got {type(base_model.model)}")
+
+
+    # 3. Plain MBart
+    if isinstance(llm_model, MBartForConditionalGeneration):
+        return llm_model.get_encoder()
+
+    raise AttributeError(f"Cannot find encoder in model of type {type(llm_model)}")
+
 class YouTubeASLBaseline(nn.Module):
     """Baseline T5 Model for Sign Language Translation (Pose → T5)"""
-    def __init__(self, input_dim=256, freeze_llm=False, logger=None, **kwargs):
+    def __init__(self, rgb_input_dim=512, pose_input_dim=138, freeze_llm=False, logger=None, **kwargs):
         super().__init__()
         self.device = kwargs.get("device", "cpu")
         llm_name = kwargs.get("llm_name", "mbart-large-50")  # Default to MBart50
         self.modality = kwargs.get("modality", "pose")  # Default to pose modality
         
         self.llm_name = llm_name
-        self.hidden_dim = kwargs.get("hidden_dim", 256)  # Default hidden dimension for pose features
-        
+        self.hidden_dim = kwargs.get("hidden_dim", 512)  # Default hidden dimension for pose features
+
         if "pose" in self.modality:
-            self.pose_projector = nn.Linear(input_dim, self.hidden_dim)  # Project pose features to 256 dim
-            input_dim = self.hidden_dim  # Update input_dim to match pose projector output
+            self.pose_projector = nn.Linear(pose_input_dim, self.hidden_dim)  # Project pose features to 512 dim
+            self.input_dim = self.hidden_dim  # Update input_dim to match pose projector output
+            self.pose_temporal_encoder = TemporalEncoder(input_dim=self.hidden_dim)
         else:
             self.pose_projector = nn.Identity()
+            self.pose_temporal_encoder = nn.Identity()
+            
+        if 'rgb' in self.modality:
+            self.rgb_temporal_encoder = TemporalEncoder(input_dim=rgb_input_dim)
+            self.input_dim = rgb_input_dim
+        else:
+            self.rgb_temporal_encoder = nn.Identity()
+            
+        if 'pose' in self.modality and 'rgb' in self.modality:
+            self.cross_attention = nn.MultiheadAttention(embed_dim=self.hidden_dim, num_heads=8, batch_first=True)
         
-        if llm_name == "t5-base":
-            self.tokenizer = T5Tokenizer.from_pretrained(llm_name)
-            self.llm_model = T5ForConditionalGeneration.from_pretrained(llm_name)            
-            self.decoder_start_token_id = self.tokenizer.pad_token_id
-
-        elif llm_name == "mbart-large-50":
+        if llm_name == "mbart-large-50":
             self.tokenizer = MBart50TokenizerFast.from_pretrained("facebook/mbart-large-50")
             self.llm_model = MBartForConditionalGeneration.from_pretrained("facebook/mbart-large-50")
             self.tokenizer.src_lang = "en_XX"
@@ -53,28 +83,27 @@ class YouTubeASLBaseline(nn.Module):
             raise ValueError(f"Unsupported llm_name: {llm_name}. Use 't5-base' or 'mbart-large-50'.")
 
         # Linear projection for pose → embedding
-        self.input_dim = input_dim
         self.llm_dim = self.llm_model.config.d_model  # usually 768
-        self.fc = nn.Linear(input_dim, self.llm_dim)
+        self.fc = nn.Linear(self.input_dim, self.llm_dim)
         self.norm = nn.LayerNorm(self.llm_dim)
-
-        self.temporal_encoder = TemporalEncoder(input_dim=self.input_dim)
 
 
         if logger:
             logger.info(f"Loaded LLM model: {llm_name}")
-            logger.info(f"Pose dim: {input_dim} → LLM hidden dim: {self.llm_dim}")
+            
+            logger.info(f"Modality: {self.modality}")
+            logger.info(f"Freeze LLM parameters: {freeze_llm}")
             if freeze_llm:
                 logger.info("Freezing LLM parameters.")
         else:
             print(f"Loaded  {llm_name}")
-            print(f"Pose dim: {input_dim} → LLM hidden dim: {self.llm_dim}")
             if freeze_llm:
                 print("Freezing LLM parameters.")
 
         if freeze_llm:
             for param in self.llm_model.parameters():
                 param.requires_grad = False
+
 
     def forward(self, lh = None, rh = None, body = None, face = None, 
                 frame_feat = None, split = 'train', decoder_input_ids = None, attention_mask=None):
@@ -98,41 +127,39 @@ class YouTubeASLBaseline(nn.Module):
             
             pose_features = self.pose_projector(pose_features)  # Project to 256 dim
             
-            if 'rgb' in self.modality:
-                if frame_feat is None:
-                    raise ValueError("frame_feat must be provided for rgb modality.")
-                # Concatenate pose features with frame features
-                assert pose_features.shape[0] == frame_feat.shape[0], "Batch size mismatch between pose features and frame features."
-                assert pose_features.shape[1] == frame_feat.shape[1], "Time steps mismatch between pose features and frame features."
-                
-                input_feat = torch.cat([pose_features, frame_feat], dim=-1)  
-            else:            
-                input_feat = pose_features
-        
-        elif self.modality == "rgb":
-            if frame_feat is None:
-                raise ValueError("frame_feat must be provided for rgb modality.")
-            input_feat = frame_feat
-        else:
-            raise ValueError(f"Unsupported modality: {self.modality}. Use 'pose', 'rgb', or 'pose_rgb'.")
+            pose_features = self.pose_temporal_encoder(pose_features)  # Temporal encoding for pose features
+            # print(f'pose_features.shape: {pose_features.shape}')
+
+        if "rgb" in self.modality:
+            # print(f'frame_feat.shape: {frame_feat.shape}')
+            rgb_features = self.rgb_temporal_encoder(frame_feat)  # Temporal encoding for RGB features
+            # print(f'rgb_features.shape: {rgb_features.shape}')
             
-        
+            
+        if "pose" in self.modality and "rgb" in self.modality:
+            # Cross-attention between pose and RGB features
+            cross_attn_output, _ = self.cross_attention(pose_features, rgb_features, rgb_features)
+            
 
-        B, T, _ = input_feat.shape
+        elif "pose" in self.modality and not "rgb" in self.modality:
+            cross_attn_output = pose_features
+        elif not "pose" in self.modality and "rgb" in self.modality:
+            cross_attn_output = rgb_features
+        else:
+            raise ValueError("At least one modality (pose or rgb) must be provided.")
 
-        input_feat = self.temporal_encoder(input_feat)  # Before fc
+        B, T, _ = cross_attn_output.shape
+
 
         # Linear projection
-        feat_embeds = self.fc(input_feat)
+        feat_embeds = self.fc(cross_attn_output)
         feat_embeds = self.norm(feat_embeds)
 
         if attention_mask is None:
-            attention_mask = torch.ones(B, T, device=input_feat.device)
+            attention_mask = torch.ones(B, T, device=cross_attn_output.device)
 
-        if hasattr(self.llm_model, "encoder"):
-            encoder = self.llm_model.encoder
-        else:
-            encoder = self.llm_model.model.encoder  # e.g., for MBart
+        encoder = get_mbart_encoder(self.llm_model)
+
 
         encoder_outputs = encoder(
             inputs_embeds=feat_embeds,

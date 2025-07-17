@@ -1,13 +1,17 @@
 #!/bin/bash
 
+####################### CONFIG MACRO #########################
+##############################################################
+
+
 #SBATCH --partition=contrib-gpuq                    # need to set 'gpuq' or 'contrib-gpuq' partition
 #SBATCH --qos=gpu                           # need to select 'gpu' QOS or other relevant QOS
-#SBATCH --job-name=unisign                   # Job name
+#SBATCH --job-name=signTrans                   # Job name
 #SBATCH --output=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/zlog/zslurm/%x-%N-%j.out   # Output file
 #SBATCH --error=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/zlog/zslurm/%x-%N-%j.err    # Error file
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=2                # One task per GPU
-#SBATCH --gres=gpu:A100.80gb:2             # Request 2 A100 GPUs
+#SBATCH --ntasks-per-node=3               # One task per GPU
+#SBATCH --gres=gpu:A100.80gb:3             # Request 2 A100 GPUs
 #SBATCH --mem=60gb                         # Memory per node
 #SBATCH --export=ALL
 #SBATCH --time=4-24:00:00                  # Set to 4 days and 24 hours
@@ -23,6 +27,9 @@ module load gnu10
 module load python
 
 source /home/rhong5/py310Torch/bin/activate
+
+# source /projects/kosecka/hongrui/vir_env/mmpose_env/bin/activate
+
 cd /home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans
 
 PORT=$(( (RANDOM << 8 | RANDOM) & 0xFFFF ))
@@ -30,7 +37,7 @@ echo "Random port: $PORT"
 
 
 # # Launch distributed training with accelerate
-accelerate launch --num_processes=2 --num_machines=1 --machine_rank=0 --main_process_ip=localhost --main_process_port=$PORT \
+accelerate launch --num_processes=3 --num_machines=1 --machine_rank=0 --main_process_ip=localhost --main_process_port=$PORT \
     train_signTran_dist.py 2> >(grep -v "absl::InitializeLog" | grep -v "gl_context_egl.cc" | grep -v "gl_context.cc" >&2)
 
 

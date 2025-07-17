@@ -18,7 +18,7 @@ if __name__ == '__main__':
 from utils.mediapipe_kpts_mapping import MediapipeKptsMapping
 
 class How2SignNaive(Dataset):
-    def __init__(self, split, root_dir = None, pose_seq_len = 150, frame_seq_len = 30, **kwargs):
+    def __init__(self, split, root_dir = None, pose_seq_len = 150, frame_seq_len = 60, **kwargs):
         """
         Initialize the YouTube ASL dataset loader for pre-processed frames.
         Args:
@@ -48,7 +48,7 @@ class How2SignNaive(Dataset):
         
         
         if root_dir is None:
-            self.root_dir = '/projects/kosecka/hongrui/dataset/how2sign/processed_how2sign/'
+            self.root_dir = '/projects/kosecka/hongrui/dataset/how2sign/how2sign_pro_0714'
         else:
             self.root_dir = root_dir
             
@@ -70,6 +70,8 @@ class How2SignNaive(Dataset):
         if not os.path.exists(self.ann_filepath_txt):
             annos_files = os.listdir(self.clip_anno_dir)
             annos_files = [os.path.join(self.clip_anno_dir, f) for f in annos_files if f.endswith('.json')]
+            if self.use_mini_dataset:
+                annos_files = annos_files[:len(annos_files)//2]  # Limit to 1000 samples for debugging
             with open(self.ann_filepath_txt, 'w', encoding='utf-8') as f:
                 for anno_file in annos_files:
                     f.write(anno_file + '\n')
@@ -195,7 +197,7 @@ class How2SignNaive(Dataset):
             if self.delete_blury_frames and (np_hand_keypoints < 0).any():
                 # Skip frames with no hand keypoints
                 ### if the chance is larger than 0.6, keep the frame
-                if np.random.rand() <= 0.4:                
+                if np.random.rand() <= 0.2:                
                     continue
             hand_keypoints_all.append(hand_keypoints)
             body_keypoints_all.append(body_keypoints)
@@ -274,7 +276,8 @@ class How2SignNaive(Dataset):
         face_keypoints_all = face_keypoints_all[selected_pose_seq_indices]
         
         if self.load_frame:
-            selected_frame_seq_indices, selected_frame_seq_names = self.uniform_with_jitter_sorted(frame_names, self.frame_seq_len, jitter_ratio=0.4)
+            # selected_frame_seq_indices, selected_frame_seq_names = self.uniform_with_jitter_sorted(frame_names, self.frame_seq_len, jitter_ratio=0.4)
+            selected_frame_seq_indices = selected_pose_seq_indices
             all_frames = np.array(all_frames, dtype=np.uint8) # (num_seq, 224, 224, 3)
             all_frames = all_frames[selected_frame_seq_indices]
             # print(f"all_frames shape: {all_frames.shape}") #(num_seq, 224, 224, 3)
@@ -385,8 +388,8 @@ if __name__ == '__main__':
 
 
     split = 'test'
-    pose_seq_len = 600
-    frame_seq_len = 600
+    pose_seq_len = 100
+    frame_seq_len = 100
     modility = 'pose_rgb'  # 'pose', 'rgb', 'pose_rgb'
     dataset = How2SignNaive(split, 
                             pose_seq_len=pose_seq_len, 

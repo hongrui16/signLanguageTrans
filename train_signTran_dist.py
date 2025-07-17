@@ -28,10 +28,8 @@ from typing import List, Tuple
 from transformers.modeling_outputs import BaseModelOutput
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 
-from transformers import MBartTokenizer
-from transformers import AutoTokenizer
-from transformers import MBartTokenizer, MBartForConditionalGeneration
 
+from peft import get_peft_model, LoraConfig, TaskType
 
 
 from network.uniSign.uni_sign_network import UniSignNetwork
@@ -74,6 +72,7 @@ class SignTrans:
         self.delete_blury_frames = args.delete_blury_frames
         self.freeze_llm_at_early_epochs = args.freeze_llm_at_early_epochs
         self.use_mini_dataset = args.use_mini_dataset
+        self.use_lora = args.use_lora
         
         
         self.ignore_index = -100 # Used for ignoring padding tokens in loss computation
@@ -295,24 +294,40 @@ class SignTrans:
             "face": len(self.face_indices)
         }
 
-        input_dim = 0
+        pose_input_dim = 0
         if self.use_pose:
             if 'face' in self.pose_set:
-                input_dim += len(self.face_indices) * 2
+                pose_input_dim += len(self.face_indices) * 2
             if 'body' in self.pose_set:
-                input_dim += len(self.body_indices) * 2
+                pose_input_dim += len(self.body_indices) * 2
             if 'hand' in self.pose_set:
-                input_dim += len(self.hand_indices) * 2 * 2
-                
+                pose_input_dim += len(self.hand_indices) * 2 * 2
+        self.logger.info(f"Pose input dimension: {pose_input_dim}", main_process_only=self.accelerator.is_main_process)
+        
         if self.use_img_encoder:
-            input_dim += encoder_output_dim
+            rgb_input_dim = encoder_output_dim
+            self.logger.info(f"RGB Input dimension for model: {rgb_input_dim}", main_process_only=self.accelerator.is_main_process)
+        else:
+            rgb_input_dim = None
+            self.logger.info("No RGB input dimension as use_img_encoder is False", main_process_only=self.accelerator.is_main_process)
         
-        self.logger.info(f"Input dimension for model: {input_dim}", main_process_only=self.accelerator.is_main_process)
-        
+        self.logger.info(f'lora_config: {self.use_lora}', main_process_only=self.accelerator.is_main_process)
+        if self.use_lora:
+            lora_config = LoraConfig(
+                r=8,
+                lora_alpha=16,
+                target_modules=["q_proj", "v_proj"],  # 可根据实际模型层名微调
+                lora_dropout=0.1,
+                bias="none",
+                task_type=TaskType.SEQ_2_SEQ_LM,
+                )
+
+            
         self.logger.info("Tokenizer loaded.", main_process_only=self.accelerator.is_main_process)
         if self.model_name == 'YouTubeASLBaseline':
             self.signModel = YouTubeASLBaseline(
-                input_dim=input_dim,
+                rgb_input_dim=rgb_input_dim,
+                pose_input_dim=pose_input_dim,
                 device=self.device,
                 freeze_llm=self.freeze_llm,
                 llm_name=self.llm_name,
@@ -320,15 +335,31 @@ class SignTrans:
             )
             self.tokenizer = self.signModel.tokenizer
             self.logger.info(f"Tokenizer vocab size: {self.tokenizer.vocab_size}", main_process_only=self.accelerator.is_main_process)
+            
+            if self.use_lora:
+                self.signModel.llm_model = get_peft_model(self.signModel.llm_model, lora_config)            
+                if hasattr(self.signModel.llm_model, "print_trainable_parameters"):
+                    self.signModel.llm_model.print_trainable_parameters()
+                else:
+                    self.logger.warning("LoRA model does not support print_trainable_parameters method.", main_process_only=self.accelerator.is_main_process)
+
         elif self.model_name == 'UniSignNetwork':            
             self.signModel = UniSignNetwork(hidden_dim=256, LLM_name="facebook/mbart-large-50", 
                                             device=self.device,
-                                            freeze_llm = self.freeze_llm,
+                                            freeze_llm=self.freeze_llm,
                                             llm_name=self.llm_name,
                                             modality=self.modality,
                                             )
             self.tokenizer = self.signModel.llm_trans.tokenizer
             self.logger.info(f"Tokenizer vocab size: {self.tokenizer.vocab_size}", main_process_only=self.accelerator.is_main_process)
+            
+            if self.use_lora:
+                self.signModel.llm_model.model = get_peft_model(self.signModel.llm_model.model, lora_config)
+                if hasattr(self.signModel.llm_model.model, "print_trainable_parameters"):
+                    self.signModel.llm_model.model.print_trainable_parameters()
+                else:
+                    self.logger.warning("LoRA model does not support print_trainable_parameters method.", main_process_only=self.accelerator.is_main_process)
+
         else:
             raise ValueError(f"Unsupported model name: {self.model_name}. Must be 'YouTubeASLBaseline' or 'UniSignNetwork'.")
         
@@ -439,7 +470,7 @@ class SignTrans:
                 frame_feat = frame_feat.reshape(B, T, -1)  # Reshape back to (B, T, feature_dim)
             else:
                 frame_feat = None
-            decoder_input_ids, targets = self.encode_text(text)
+            decoder_input_ids, targets = self.tokenize_batch_texts(text)
             # print("decoder_input_ids min:", decoder_input_ids.min().item())
             # print("decoder_input_ids max:", decoder_input_ids.max().item())
 
@@ -556,7 +587,7 @@ class SignTrans:
                 else:
                     frame_feat = None
 
-                decoder_input_ids, targets = self.encode_text(text)
+                decoder_input_ids, targets = self.tokenize_batch_texts(text)
                 translated_text, encoder_hidden = self.signModel(
                     left_hand_keypoints,
                     right_hand_keypoints,
@@ -644,7 +675,7 @@ class SignTrans:
         encoded = self.tokenizer(text, return_tensors="pt", padding="max_length", truncation=True, max_length=128, add_special_tokens=True)
         return encoded['input_ids'].squeeze().to(self.device)
 
-    def encode_text(self, text: List[str]) -> Tuple[torch.Tensor, torch.Tensor]:
+    def tokenize_batch_texts(self, text: List[str]) -> Tuple[torch.Tensor, torch.Tensor]:
         try:
             batch_texts = [self.tokenize_text(t) for t in text]
         except Exception as e:
@@ -976,6 +1007,8 @@ def get_args():
     parser.add_argument("--delete_blury_frames", default=arg_settings["delete_blury_frames"], action="store_true", help="Delete blurry frames")
     parser.add_argument("--freeze_llm_at_early_epochs", default=arg_settings["freeze_llm_at_early_epochs"], help="Freeze the LLM at early epochs")
     parser.add_argument("--use_mini_dataset", default=arg_settings["use_mini_dataset"], action="store_true", help="Use a mini dataset for debugging")
+    parser.add_argument("--use_lora", default=arg_settings["use_lora"], action="store_true", help="Use LoRA for training")
+
     return parser.parse_args()
 
 if __name__ == '__main__':

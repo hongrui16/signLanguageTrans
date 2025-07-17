@@ -22,9 +22,10 @@ umask 0027
 # module load gnu10                           
 # module load python
 
-# source /home/rhong5/py310Torch/bin/activate
+source /home/rhong5/py310Torch/bin/activate
 
-cd /projects/kosecka/hongrui/dataset/how2sign/video_zipfiles
+python /home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/tools/vis_keyframes_distrubiton.py
+# cd /projects/kosecka/hongrui/dataset/how2sign/video_zipfiles
 # unzip videos_part1.zip
 # unzip videos_part2.zip
 # unzip videos_part3.zip

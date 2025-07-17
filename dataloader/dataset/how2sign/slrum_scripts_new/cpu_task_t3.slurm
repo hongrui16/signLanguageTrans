@@ -29,7 +29,7 @@ cd /home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/data
 
 
 ### originally, start_idx was 104000, and end_idx was 157185
-python how2sign_dump_json.py --start_idx 8904 --end_idx 13356
+python mediapipe_pose.py --start_idx 6736 --end_idx 9000
 
 
 # torchrun --nnodes=${NUM_NODES} --nproc_per_node=${GPUS_PER_NODE} train_VAE.py --debug 

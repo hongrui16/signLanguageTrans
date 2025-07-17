@@ -28,7 +28,7 @@ source /home/rhong5/py310Torch/bin/activate
 cd /home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/how2sign
 
 ### originally, start_idx was 157185, and end_idx was 227885
-python how2sign_dump_json.py --start_idx 17808 --end_idx 22260
+python mediapipe_pose.py --start_idx 12452 --end_idx 15000
 
 
 # torchrun --nnodes=${NUM_NODES} --nproc_per_node=${GPUS_PER_NODE} train_VAE.py --debug 

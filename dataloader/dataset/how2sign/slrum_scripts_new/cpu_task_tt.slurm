@@ -27,7 +27,7 @@ source /home/rhong5/py310Torch/bin/activate
 cd /home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/how2sign
 
 
-python how2sign_dump_json.py --start_idx 0 --end_idx 2699 --split test
+python mediapipe_pose.py --start_idx 0 --end_idx 4000 --split test
 
 
 # torchrun --nnodes=${NUM_NODES} --nproc_per_node=${GPUS_PER_NODE} train_VAE.py --debug 
