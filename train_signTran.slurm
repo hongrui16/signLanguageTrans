@@ -28,8 +28,8 @@
 #SBATCH --partition=contrib-gpuq                    # need to set 'gpuq' or 'contrib-gpuq'  partition
 #SBATCH --qos=gpu                           # need to select 'gpu' QOS or other relvant QOS
 #SBATCH --job-name=unisign                   # vqgan, vqvae, vqdiffusion, gaussiandiffusion
-#SBATCH --output=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/Zlog/%u/%x-%N-%j.out   # Output file
-#SBATCH --error=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/Zlog/%u/%x-%N-%j.err    # Error file
+#SBATCH --output=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/zlog/%x-%N-%j.out   # Output file
+#SBATCH --error=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/zlog/%u/%x-%N-%j.err    # Error file
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1                # number of cores needed
 #SBATCH --gres=gpu:A100.80gb:1                # up to 8; only request what you need # gpu:A100.80gb:1 ; gpu:3g.40gb:1 

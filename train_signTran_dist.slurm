@@ -12,7 +12,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=3               # One task per GPU
 #SBATCH --gres=gpu:A100.80gb:3             # Request 2 A100 GPUs
-#SBATCH --mem=60gb                         # Memory per node
+#SBATCH --mem=100gb                         # Memory per node
 #SBATCH --export=ALL
 #SBATCH --time=4-24:00:00                  # Set to 4 days and 24 hours
 #SBATCH --cpus-per-task=4                  # Number of CPU cores per task

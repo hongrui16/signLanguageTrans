@@ -16,6 +16,7 @@ from dataloader.dataset.youtubeASL.youtubeASLFramesComposed import YouTubeASLFra
 
 from dataloader.dataset.how2sign.how2sign_openpose import How2SignOpenPose
 from dataloader.dataset.how2sign.how2signNaive import How2SignNaive
+from dataloader.dataset.how2sign.how2signNaiveV2 import How2SignNaiveV2
 
 
 def get_dataloader(
@@ -109,7 +110,7 @@ def get_dataloader(
         else:
             raise ValueError(f"Unsupported dataset: {dataset_name}")
     
-    elif dataset_name in ['How2SignOpenPose', 'How2SignNaive']:
+    elif dataset_name in ['How2SignOpenPose', 'How2SignNaive', 'How2SignNaiveV2']:
 
         if dataset_name == 'How2SignOpenPose':
             data_dir = '/projects/kosecka/hongrui/dataset/how2sign'
@@ -131,6 +132,18 @@ def get_dataloader(
             )
         elif dataset_name == 'How2SignNaive':
             dataset = How2SignNaive(
+                split,
+                debug=debug,
+                modality=modality,
+                logger=logger,
+                img_size=img_size,
+                pose_seq_len = num_pose_seq,
+                frame_seq_len = num_frame_seq,
+                delete_blury_frames = delete_blury_frames,
+                use_mini_dataset = use_mini_dataset,
+            )
+        elif dataset_name == 'How2SignNaiveV2':
+            dataset = How2SignNaiveV2(
                 split,
                 debug=debug,
                 modality=modality,

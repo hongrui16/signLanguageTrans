@@ -350,7 +350,7 @@ class SignTrans:
                                             llm_name=self.llm_name,
                                             modality=self.modality,
                                             )
-            self.tokenizer = self.signModel.llm_trans.tokenizer
+            self.tokenizer = self.signModel.llm_model.tokenizer
             self.logger.info(f"Tokenizer vocab size: {self.tokenizer.vocab_size}", main_process_only=self.accelerator.is_main_process)
             
             if self.use_lora:
