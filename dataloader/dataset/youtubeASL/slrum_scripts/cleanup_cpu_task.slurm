@@ -14,21 +14,21 @@
 
 
 
-# cd /projects/kosecka/hongrui/dataset/youtubeASL
-
+cd /home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/youtubeASL/slrum_scripts/
+sh safe_verbose_delete.sh
 
 # rsync -av --partial --append-verify /scratch/rhong5/dataset/youtubeASL_anno/ ./youtubeASL_anno/
 
 
-TARGET_DIR="/projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_frames"
+# TARGET_DIR="/projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_frames"
 
-echo "🚀 Starting batch deletion under: $TARGET_DIR"
+# echo "🚀 Starting batch deletion under: $TARGET_DIR"
 
-# 每次找出一批文件删除，避免卡死
-find "$TARGET_DIR" -type f -print0 | xargs -0 -n 2000 rm -f
-if [ $? -ne 0 ]; then
-    echo "❌ Error occurred during batch deletion."
-    exit 1
-else
-    echo "✅ Batch deletion completed successfully."
-fi
+# # 每次找出一批文件删除，避免卡死
+# find "$TARGET_DIR" -type f -print0 | xargs -0 -n 2000 rm -f
+# if [ $? -ne 0 ]; then
+#     echo "❌ Error occurred during batch deletion."
+#     exit 1
+# else
+#     echo "✅ Batch deletion completed successfully."
+# fi

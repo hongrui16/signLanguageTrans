@@ -24,8 +24,8 @@ from utils.mediapipe_kpts_mapping import MediapipeKptsMapping
 
 
 
-class MediapipePose:
-    def __init__(self, root_dir: str = None, split = 'test', num_frames_per_clip: int = 300, debug = False, return_frame = False):
+class Mediapipe3DPose:
+    def __init__(self, split = 'test', debug = False, num_frames_per_clip = 200, return_frame = False):
         """
         Initialize the YouTube ASL dataset loader for a single video and VTT files.
         
@@ -34,23 +34,20 @@ class MediapipePose:
             num_frames_per_clip (int): Number of frames to sample per clip (default: 16).
             frame_sample_rate (int): Frames per second to sample from the video (default: 30 FPS).
         """
-        if split == 'train':
-            self.root_dir = root_dir if root_dir is not None else '/projects/kosecka/hongrui/dataset/how2sign/origin_video_zipfiles/train_raw_videos/'
-            self.video_dir = self.root_dir
-        elif split == 'test':
-            self.root_dir = '/projects/kosecka/hongrui/dataset/how2sign/origin_video_zipfiles/test_raw_videos'
-            # self.video_dir = os.path.join(f'{self.root_dir}', f'video_level/{split}/rgb_front/raw_videos') 
-            self.video_dir = self.root_dir
-        if not os.path.exists(self.root_dir):
-            raise FileNotFoundError(f"Directory not found: {self.root_dir}")
         
+        
+        self.video_dir =  '/projects/kosecka/hongrui/dataset/youtubeASL/youtube_ASL/'
         if not os.path.exists(self.video_dir):
-            raise FileNotFoundError(f"Video directory not found: {self.video_dir}")
-        
+            raise FileNotFoundError(f"Directory not found: {self.video_dir}")
         self.num_frames_per_clip = num_frames_per_clip
-
         self.debug = debug
-        self.return_frame = return_frame  # 是否返回frame
+
+
+        self.keypoints_threshold = 0.35  # Confidence threshold for keypoint detection
+        self.anno_file = '/projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_annotation.txt'
+        
+
+    
 
         print('loading YOLOv8 model...')
         self.yolo_model = YOLO('/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/youtubeASL/yolov8n.pt')
@@ -59,9 +56,7 @@ class MediapipePose:
 
         print('finished loading YOLOv8 model')
         self.keypoints_threshold = 0.35  # Confidence threshold for keypoint detection
-        self.anno_file = f'/projects/kosecka/hongrui/dataset/how2sign/re-aligned_how2sign_realigned_{split}.txt'
         
-        self.to_be_processed_list = f'{split}_to_be_processed_clips.txt'
         
         self.anno_info_lists = self.parse_annotation(self.anno_file)
         
@@ -71,15 +66,6 @@ class MediapipePose:
         
         print(f"Total clips in dataset: {len(self.anno_info_lists)}")
         
-        if os.path.exists(self.to_be_processed_list):
-            with open(self.to_be_processed_list, 'r') as f:
-                self.to_be_processed_ids = [int(line.strip()) for line in f if line.strip().isdigit()]
-        else:
-            self.to_be_processed_ids = list(range(0, len(self.anno_info_lists)))  # YouTube ASL has 652092 clips
-            
-        print(f"Total clips to be processed: {len(self.to_be_processed_ids)}")
-        
-    
 
         # # Find video and VTT files
         # self.video_transcript_pairs = self._find_files()
@@ -104,20 +90,61 @@ class MediapipePose:
         self.body_indices = [value for key, value in self.body_mapping.items()]  # Map to MediaPipe body landmarks (0–8)
         self.face_indices = [value for key, value in self.face_mapping.items()]
     
+    
     def parse_annotation(self, anno_file):
-        lines = []
-        with open(anno_file, "r", encoding="utf-8") as f:
-            for line in f:
-                fields = line.strip().split("\t")  # 去除换行并按 tab 分割
-                lines.append(fields)
+        with open(anno_file, 'r') as f:
+            lines = f.readlines()
+        
+        anno_data = []
+        for line in lines:
+            video_name, vtt_name, timestamp, text = line.strip().split('||')
+            anno_data.append((video_name, vtt_name, timestamp, text))
+        
+        if self.debug:
+            anno_data = anno_data[:200]
 
-        # 示例输出：
-        # [
-        #   ['-g0iPSnQt6w-1-rgb_front', '01', '7.97', '13.83', "I'm an expert on diving, talking about a back 1 1/2 pike."],
-        #   ...
-        # ]
+        return anno_data
 
-        return lines
+
+    def _parse_vtt(self, vtt_path: str) -> List[Tuple[float, float, str]]:
+        """
+        Parse the VTT file to extract time stamps and text.
+        
+        Args:
+            vtt_path (str): Path to the VTT file.
+        
+        Returns:
+            List of tuples (start_time, end_time, text) for valid segments.
+        """
+        captions = []
+        try:
+            for caption in webvtt.read(vtt_path):
+                start_seconds = self._time_to_seconds(caption.start)
+                end_seconds = self._time_to_seconds(caption.end)
+                text = caption.text.strip()
+                if text:  # Skip empty or invalid text segments
+                    captions.append((start_seconds, end_seconds, text))
+        except Exception as e:
+            print(f"Error parsing VTT file {vtt_path}: {e}")
+        return captions
+
+    def _time_to_seconds(self, time_str: str) -> float:
+        """
+        Convert VTT time string (e.g., "00:00:10.052") to seconds.
+        
+        Args:
+            time_str (str): Time string in format "HH:MM:SS.mmm".
+        
+        Returns:
+            Float representing seconds.
+        """
+        hours, minutes, seconds = time_str.split(':')
+        seconds, milliseconds = seconds.split('.')
+        total_seconds = (int(hours) * 3600 + int(minutes) * 60 + int(seconds) + int(milliseconds) / 1000)
+        return total_seconds
+
+
+    
 
     def _find_files(self) -> List[Tuple[str, str]]:
         """
@@ -143,20 +170,6 @@ class MediapipePose:
         
         return video_transcript_pairs
 
-
-
-    def _time_to_seconds(self, time_str: str) -> float:
-        """
-        Convert VTT time string (e.g., "00:00:10.052") to seconds.
-        
-        Args:
-            time_str (str): Time string in format "HH:MM:SS.mmm".
-        
-        Returns:
-            Float representing seconds.
-        """
-        time_senconds = float(time_str)
-        return time_senconds
 
 
     def _detect_keypoints(self, frame_rgb: np.ndarray, det_hand_kpts: bool = True) -> Tuple[Optional[List], Optional[List], Optional[List]]:
@@ -408,7 +421,7 @@ class MediapipePose:
             body_h, body_w = body_rgb.shape[:2]
             
             # Detect hands using MediaPipe
-            hand_keypoints, body_keypoints, face_keypoints = self._detect_keypoints(body_rgb)
+            hand_keypoints, body_keypoints, face_keypoints = self._detect_3d_keypoints(body_rgb)
             
             invalid_hand_mask = (hand_keypoints[:, 0] < 0) | (hand_keypoints[:, 1] < 0)
             invalid_body_mask = (body_keypoints[:, 0] < 0) | (body_keypoints[:, 1] < 0)
@@ -485,7 +498,7 @@ class MediapipePose:
             
             cnt += 1
 
-            if len(frame_indices)/5  < cnt or cnt > 4*len(frame_indices)/5:
+            if len(frame_indices)/6  < cnt or cnt > 5*len(frame_indices)/6:
                 left_hand_iou = compute_iou(cur_left_hand_bbox, previous_left_hand_bbox)
                 right_hand_iou = compute_iou(cur_right_hand_bbox, previous_right_hand_bbox)
                 if left_hand_iou > 0.9 and right_hand_iou > 0.9:
@@ -522,19 +535,27 @@ class MediapipePose:
         # self.mp_face_mesh = mp.solutions.face_mesh.FaceMesh(static_image_mode=False, min_detection_confidence=self.keypoints_threshold)
         os.makedirs(save_img_dir, exist_ok=True)
         os.makedirs(save_json_dir, exist_ok=True)
-        anno_json = {}
-        end_idx = len(self.anno_info_lists) if end_idx is None else end_idx
+
+        if end_idx is None:
+            end_idx = len(self.anno_info_lists)
+        elif end_idx > len(self.anno_info_lists):
+            end_idx = len(self.anno_info_lists)  # Ensure end_idx does not exceed the list length
+            
         cnt_clip = 0
-        
-        to_be_processed_ids = self.to_be_processed_ids[start_idx:end_idx]
-        
+
+        to_be_processed_ids = np.arange(start_idx, end_idx)
+
         for i, idx in enumerate(to_be_processed_ids):
             clip_info_dict = {}
             clip_id = f'{idx:08d}'
 
-            video_name_prefix, scentence_id, start_time, end_time, text = self.anno_info_lists[idx]
-            video_name = f'{video_name_prefix}.mp4'
+            video_name, vtt_name, timestamp, text = self.anno_info_lists[idx]
+            video_name_prefix = os.path.splitext(video_name)[0]
+            
+            start_time, end_time = timestamp.split(' --> ')
+            # video_name_prefix, scentence_id, start_time, end_time, text = self.anno_info_lists[idx]
 
+            scentence_id = f'{idx:08d}'
             print(f"Processing clip {video_name} {i + start_idx}/{end_idx}")
 
 
@@ -561,8 +582,11 @@ class MediapipePose:
                                                                                            end_time, drop_last, print_flag=True)
 
 
-            if selected_frames is None or len(selected_frames) == 0:
+            if selected_frames is None:
                 print(f"Warning: No valid frames found for {video_name} in the specified time range.")
+                continue
+            if len(selected_frames) <= 5:
+                print(f"Warning: Not enough valid frames found for {video_name} in the specified time range. Found {len(selected_frames)} frames.")
                 continue
             
             height, width, _ = selected_frames[0].shape
@@ -638,7 +662,7 @@ class MediapipePose:
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)  # Convert RGB to BGR for OpenCV
                 writer.write(frame)  # 确保 frame 是 BGR 格式
             writer.release()
-            print(f"✅ 成功保存视频到: {output_path}")
+            # print(f"✅ 成功保存视频到: {output_path}")
 
 
             cnt_clip += 1
@@ -698,13 +722,13 @@ class MediapipePose:
                 h, w, _ = frame.shape
                 frame = frame.copy()
                 # print('hand_kp:', hand_kp)
-                for (x, y) in hand_kp:
+                for (x, y, _) in hand_kp:
                     if x > 0 and y > 0:
                         cv2.circle(frame, (int(x * w), int(y * h)), 1, (0, 255, 0), -1)
-                for (x, y) in body_kp:
+                for (x, y, _) in body_kp:
                     if x > 0 and y > 0:
                         cv2.circle(frame, (int(x * w), int(y * h)), 1, (255, 0, 0), -1)
-                for (x, y) in face_kp:
+                for (x, y, _) in face_kp:
                     if x > 0 and y > 0:
                         cv2.circle(frame, (int(x * w), int(y * h)), 1, (0, 0, 255), -1)
                 
@@ -722,7 +746,7 @@ def main_dump_anno_json(args):
     
     
 
-    dataset = MediapipePose(split = split, debug=debug)
+    dataset = Mediapipe3DPose(split = split, debug=debug)
 
     
     if debug:
@@ -735,8 +759,8 @@ def main_dump_anno_json(args):
         # save_anno_dir = '/projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_anno'
         # save_img_dir = '/scratch/rhong5/dataset/youtubeASL_frame_pose_0602/youtubeASL_frames'
         # save_anno_dir = '/scratch/rhong5/dataset/youtubeASL_frame_pose_0602/youtubeASL_anno'
-        save_img_dir = f'/projects/kosecka/hongrui/dataset/how2sign/how2sign_pro_0714/{split}/frames'
-        save_anno_dir = f'/projects/kosecka/hongrui/dataset/how2sign/how2sign_pro_0714/{split}/annos'
+        save_img_dir = f'/projects/kosecka/hongrui/dataset/youtubeASL/processed_0722/frames'
+        save_anno_dir = f'/projects/kosecka/hongrui/dataset/youtubeASL/processed_0722/annos'
 
     os.makedirs(save_img_dir, exist_ok=True)
     os.makedirs(save_anno_dir, exist_ok=True)

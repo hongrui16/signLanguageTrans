@@ -2,9 +2,9 @@
 
 
 #SBATCH --partition=normal                    
-#SBATCH --job-name=youtubeasl                   
-#SBATCH --output=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/youtubeASL/zlog/%u/%x-%N-%j.out  
-#SBATCH --error=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/youtubeASL/zlog/%u/%x-%N-%j.err   
+#SBATCH --job-name=t5                   
+#SBATCH --output=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/youtubeASL/zlog/%x-%N-%j.out  
+#SBATCH --error=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/youtubeASL/zlog/%x-%N-%j.err   
 #SBATCH --nodes=1
 #SBATCH --ntasks=1                 # 需要 4 个独立任务
 #SBATCH --mem-per-cpu=15gb          # 每个 CPU 核分配 20GB 内存
@@ -27,9 +27,8 @@ source /home/rhong5/py310Torch/bin/activate
 
 cd /home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/youtubeASL
 
-
-### originally, start_idx was 390000, and end_idx was 439985
-python youTubeASLDumpJson.py --start_idx 438726 --end_idx 439985
+### originally, start_idx was 227885, and end_idx was 298585
+python mediapipe_dump_3D_pose.py --start_idx 260836  --end_idx 326045
 
 
 # torchrun --nnodes=${NUM_NODES} --nproc_per_node=${GPUS_PER_NODE} train_VAE.py --debug 
