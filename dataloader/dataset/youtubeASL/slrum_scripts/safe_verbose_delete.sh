@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 设置你要删除的目录（请改成绝对路径）
-TARGET_DIR="/projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_frames"
+TARGET_DIR="$1"
 
 echo "🚀 Starting batch deletion under: $TARGET_DIR"
 

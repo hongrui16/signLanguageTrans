@@ -289,7 +289,7 @@ class Mediapipe3DPose:
 
 
 
-    def fine_sample_frames_with_filter(self, video_path: str, start_time: float, end_time: float, drop_last: int, print_flag: bool = False) -> Optional[List[np.ndarray]]:
+    def fine_sample_frames_with_filter(self, video_path: str, start_time: float, end_time: float, print_flag: bool = False) -> Optional[List[np.ndarray]]:
         """
         Sample frames from a video clip, filter out frames without hand keypoints, and resample.
         
@@ -375,17 +375,19 @@ class Mediapipe3DPose:
                     if int(results.boxes.cls[i]) == 0:
                         x1, y1, x2, y2 = results.boxes.xyxy[i].tolist()
                         person_bboxes.append([x1, y1, x2, y2])
-                
-                # 若多人，跳过 clip
-                if len(person_bboxes) != 1:
-                    cnt += 10
+                if len(person_bboxes) == 0:
                     if print_flag:
-                        print(f"Skip {video_path}: detected {len(person_bboxes)} persons.")
-                    
-                    if cnt > max_det_frames:
-                        cap.release()
-                        return None, None, None, None, None,  None, None, None
+                        print(f"{video_path}: No person detected in frame {fid}.")
+                    cnt += 10
                     continue
+                # 若多人，跳过 clip
+                elif len(person_bboxes) > 1:
+                    if print_flag:
+                        print(f"{video_path}: detected {len(person_bboxes)} persons, selecting largest.")
+                    # 选择最大面积的 bbox
+                    areas = [(x2 - x1) * (y2 - y1) for (x1, y1, x2, y2) in person_bboxes]
+                    max_idx = areas.index(max(areas))
+                    person_bboxes = [person_bboxes[max_idx]]
                 
                 # 单人，使用其 bbox
                 body_xmin, body_ymin, body_xmax, body_ymax = [int(v) for v in person_bboxes[0]]
@@ -549,44 +551,49 @@ class Mediapipe3DPose:
             clip_info_dict = {}
             clip_id = f'{idx:08d}'
 
+            '''
+            wGkZ5xID3_8.mp4||wGkZ5xID3_8.en.vtt||00:04:39.880 --> 00:04:42.780||If you want to book a hotel room,
+            wGkZ5xID3_8.mp4||wGkZ5xID3_8.en.vtt||00:04:43.000 --> 00:04:47.580||reservations happen 1 year and 1 day in advance.
+            '''
             video_name, vtt_name, timestamp, text = self.anno_info_lists[idx]
             video_name_prefix = os.path.splitext(video_name)[0]
             
-            start_time, end_time = timestamp.split(' --> ')
+            
             # video_name_prefix, scentence_id, start_time, end_time, text = self.anno_info_lists[idx]
-
+            
+            
             scentence_id = f'{idx:08d}'
+            squeezed_frame_path = os.path.join(save_img_dir,  f'{video_name_prefix}_SID{scentence_id}_frames.mp4')
+            if os.path.exists(squeezed_frame_path):
+                print(f"Warning: {squeezed_frame_path} already exists, skipping.")
+                continue
+            
             print(f"Processing clip {video_name} {i + start_idx}/{end_idx}")
-
-
+            
+            
             # print(f"Processing video {video_name}, text: {text}, start: {start_time}, end: {end_time}")
-
+            start_time, end_time = timestamp.split(' --> ')
             start_time = self._time_to_seconds(start_time)
             end_time = self._time_to_seconds(end_time)
 
             video_path = os.path.join(self.video_dir, video_name)
             if not os.path.exists(video_path):
-                print(f"Warning: video {video_name} {video_path} does not exist.")
+                print(f"Warning: video {video_path} does not exist.")
                 continue
             
                 
-            if text.endswith('.'):
-                drop_last = 5
-            else:
-                drop_last = 3
-
             
             # Sample frames with hand filtering
             selected_frames, frame_index, left_hand_kpts_list, right_hand_kpts_list, \
                 face_keypoints_list, body_keypoints_list, total_clip_frames, body_bbox = self.fine_sample_frames_with_filter(video_path, start_time, 
-                                                                                           end_time, drop_last, print_flag=True)
+                                                                                           end_time, print_flag=True)
 
 
             if selected_frames is None:
-                print(f"Warning: No valid frames found for {video_name} in the specified time range.")
+                print(f"Warning: No valid frames found for {video_path} in {start_time} ~ {end_time}.")
                 continue
             if len(selected_frames) <= 5:
-                print(f"Warning: Not enough valid frames found for {video_name} in the specified time range. Found {len(selected_frames)} frames.")
+                print(f"Warning: Not enough valid frames for {video_path} in {start_time} ~ {end_time}. Found {len(selected_frames)} frames.")
                 continue
             
             height, width, _ = selected_frames[0].shape
@@ -614,8 +621,6 @@ class Mediapipe3DPose:
                 
                 # frame_name = new_frame_id
                 
-              
-
                 face_kp = face_keypoints_list[i]
                 body_kp = body_keypoints_list[i]
 
@@ -655,8 +660,9 @@ class Mediapipe3DPose:
             height, width, _ = selected_frames[0].shape
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             fps = 3
-            output_path = os.path.join(save_img_dir,  f'{video_name_prefix}_SID{scentence_id}_frames.mp4')
-            writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+            
+            
+            writer = cv2.VideoWriter(squeezed_frame_path, fourcc, fps, (width, height))
 
             for frame in selected_frames:
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)  # Convert RGB to BGR for OpenCV

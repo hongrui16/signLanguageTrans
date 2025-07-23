@@ -15,7 +15,8 @@
 
 
 cd /home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/youtubeASL/slrum_scripts/
-sh safe_verbose_delete.sh
+sh safe_verbose_delete.sh /projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_frame_pose_0614/youtubeASL_anno
+sh safe_verbose_delete.sh /projects/kosecka/hongrui/dataset/youtubeASL/youtubeASL_frame_pose_0614/youtubeASL_frames
 
 # rsync -av --partial --append-verify /scratch/rhong5/dataset/youtubeASL_anno/ ./youtubeASL_anno/
 
