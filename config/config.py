@@ -5,10 +5,9 @@ arg_settings = {
 
     "resume": None, 
     # 'resume': '/scratch/rhong5/weights/temp_training_weights/signLanguageTrans/YouTubeASLFramesNaive/20250611-055348_JID-3719511/uniSign_pose_best.pth',
-    'dataset_name': 'How2SignNaiveV2',# 'YouTubeASLFramesNaive', 'YouTubeASLFrames',
-    # 'YouTubeASLOnlineDet', 'YouTubeASLFramesComposed', 'How2SignOpenPose', 'How2SignNaive', 'How2SignNaiveV2'
+    'dataset_name': 'YoutubeASLNaiveV2',# 'YoutubeASLNaiveV2', 'How2SignNaiveV2'
     "modality": 'pose', # 'pose', 'rgb', 'pose_rgb',
-    'xD_pose': '2D', # '2D', '3D',
+    'xD_pose': '3D', # '2D', '3D',
     'finetune': True,
     'train_batch_size': 60,
     'eval_batch_size': 60,

@@ -52,29 +52,13 @@ def get_dataloader(
     else:
         num_workers = min(5, os.cpu_count() // world_size)  # Scale workers with available CPUs
 
-    if dataset_name in ['YouTubeASLFrames', 'YouTubeASLFramesNaive', 'YouTubeASLOnlineDet', 'YouTubeASLFramesComposed']:
-        # if not split == 'train':
-        #     if logger is not None:
-        #         logger.warning(f"Dataset {dataset_name} only supports 'train' split. Returning None for {split}.", main_process_only=True)
-        #     else:
-        #         print(f"Dataset {dataset_name} only supports 'train' split. Returning None for {split}.")
-        #     return None, None, None
-        
+    if dataset_name in ['YouTubeASLFrames',  'YouTubeASLOnlineDet', 'YoutubeASLNaiveV2']:
+
 
         data_dir = '/scratch/rhong5/dataset/youtube_ASL/'
         
-        if dataset_name == 'YouTubeASLFramesNaive':
-            dataset = YouTubeASLFramesNaive(
-                split = split,
-                debug=debug,
-                logger=logger,
-                modality=modality,
-                img_size=img_size,
-                num_pose_seq = num_pose_seq,
-                num_frame_seq = num_frame_seq,
-                delete_blury_frames = delete_blury_frames,
-            )
-        elif dataset_name == 'YouTubeASLFrames':
+
+        if dataset_name == 'YouTubeASLFrames':
             dataset = YouTubeASLFrames(
                 clip_frame_dir='/scratch/rhong5/dataset/youtubeASL_frames',
                 clip_anno_dir='/scratch/rhong5/dataset/youtubeASL_anno',
@@ -98,16 +82,20 @@ def get_dataloader(
                 num_frame_seq = num_frame_seq,
                 delete_blury_frames = delete_blury_frames,
             )
-        elif dataset_name == 'YouTubeASLFramesComposed':
-            dataset = YouTubeASLFramesComposed(
+        elif dataset_name == 'YoutubeASLNaiveV2':
+            dataset = YoutubeASLNaiveV2(
+                split,
                 debug=debug,
-                modality = modality,
-                img_size=img_size,
+                modality=modality,
                 logger=logger,
-                num_pose_seq = num_pose_seq,
-                num_frame_seq = num_frame_seq,
+                img_size=img_size,
+                pose_seq_len = num_pose_seq,
+                frame_seq_len = num_frame_seq,
                 delete_blury_frames = delete_blury_frames,
+                use_mini_dataset = use_mini_dataset,
+                xD_pose = xD_pose,  # Use 2D or 3D pose as specified in the config
             )
+
         else:
             raise ValueError(f"Unsupported dataset: {dataset_name}")
     

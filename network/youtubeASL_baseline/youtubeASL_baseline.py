@@ -59,6 +59,7 @@ class YouTubeASLBaseline(nn.Module):
             self.pose_projector = nn.Linear(pose_input_dim, self.hidden_dim)  # Project pose features to 512 dim
             self.input_dim = self.hidden_dim  # Update input_dim to match pose projector output
             self.pose_temporal_encoder = TemporalEncoder(input_dim=self.hidden_dim)
+            # self.pose_temporal_encoder = nn.Identity()
         else:
             self.pose_projector = nn.Identity()
             self.pose_temporal_encoder = nn.Identity()
@@ -159,11 +160,11 @@ class YouTubeASLBaseline(nn.Module):
 
         feat_embeds = self.fc(cross_attn_output)
         # print('feat_embeds', feat_embeds)
-        print("Before norm - mean:", feat_embeds.mean().item(), "std:", feat_embeds.std().item())
+        # print("Before norm - mean:", feat_embeds.mean().item(), "std:", feat_embeds.std().item())
 
         feat_embeds = self.norm(feat_embeds)
         # print('feat_embeds', feat_embeds)
-        print("After norm - mean:", feat_embeds.mean().item(), "std:", feat_embeds.std().item())
+        # print("After norm - mean:", feat_embeds.mean().item(), "std:", feat_embeds.std().item())
 
 
         encoder = get_mbart_encoder(self.llm_model)

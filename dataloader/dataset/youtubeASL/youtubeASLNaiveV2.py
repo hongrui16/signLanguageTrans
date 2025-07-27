@@ -58,6 +58,9 @@ class YoutubeASLNaiveV2(Dataset):
         if split not in ['train', 'val', 'test']:
             raise ValueError(f"Invalid split: {split}. Must be one of 'train', 'val', 'test'.")
         
+        if self.split == 'val':
+            self.split = 'test'
+            
         # self.split_dir = os.path.join(self.root_dir, self.split)
         # self.split_dir = self.root_dir
         
@@ -102,9 +105,9 @@ class YoutubeASLNaiveV2(Dataset):
             self.annos_filepaths = self.annos_filepaths[:max_num_clips]
 
         if not self.logger is None:
-            self.logger.info(f"Total clips: {len(self.annos_filepaths)}")
+            self.logger.info(f"{self.split}, Total clips: {len(self.annos_filepaths)}")
         else:
-            print(f"Total clips: {len(self.annos_filepaths)}")
+            print(f"{self.split}, Total clips: {len(self.annos_filepaths)}")
 
    
     def load_annos_filepath(self, anno_filepath_txt) -> List[Tuple[str, str]]:
@@ -297,9 +300,9 @@ class YoutubeASLNaiveV2(Dataset):
 
             if num_frames < self.pose_seq_len:
                 pad_length = self.pose_seq_len - num_frames
-                padded_body_kpts = np.zeros((pad_length, self.num_body_kpts, 2), dtype=np.float32) -1
-                padded_hand_kpts = np.zeros((pad_length, self.num_hand_kpts, 2), dtype=np.float32) -1
-                padded_face_kpts = np.zeros((pad_length, self.num_face_kpts, 2), dtype=np.float32) -1
+                padded_body_kpts = np.zeros((pad_length, self.num_body_kpts, 3), dtype=np.float32) -1
+                padded_hand_kpts = np.zeros((pad_length, self.num_hand_kpts, 3), dtype=np.float32) -1
+                padded_face_kpts = np.zeros((pad_length, self.num_face_kpts, 3), dtype=np.float32) -1
                 body_keypoints_all = np.concatenate((body_keypoints_all, padded_body_kpts), axis=0)
                 hand_keypoints_all = np.concatenate((hand_keypoints_all, padded_hand_kpts), axis=0)                                                
                 face_keypoints_all = np.concatenate((face_keypoints_all, padded_face_kpts), axis=0)
