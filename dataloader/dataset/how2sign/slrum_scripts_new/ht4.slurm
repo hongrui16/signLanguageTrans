@@ -2,7 +2,7 @@
 
 
 #SBATCH --partition=normal                    
-#SBATCH --job-name=t2                 
+#SBATCH --job-name=ht4                   
 #SBATCH --output=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/how2sign/zlog/%x-%N-%j.out  
 #SBATCH --error=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/how2sign/zlog/%x-%N-%j.err   
 #SBATCH --nodes=1
@@ -18,6 +18,7 @@ set echo
 umask 0027
 
 # to see ID and state of GPUs assigned
+# nvidia-smi
 
 module load gnu10                           
 module load python
@@ -26,8 +27,9 @@ source /home/rhong5/py310Torch/bin/activate
 
 cd /home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/how2sign
 
-### originally, start_idx was 52000, and end_idx was 104000
-python mediapipe_pose.py --start_idx 3671 --end_idx 6000
+
+### originally, start_idx was 104000, and end_idx was 157185
+python mediapipe_add_3D.py --start_idx 9000 --end_idx 12000
 
 
 # torchrun --nnodes=${NUM_NODES} --nproc_per_node=${GPUS_PER_NODE} train_VAE.py --debug 

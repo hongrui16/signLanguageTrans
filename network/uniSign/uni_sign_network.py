@@ -26,6 +26,8 @@ class UniSignNetwork(nn.Module):
         freeze_llm = kwargs.get("freeze_llm", False)
         pose_set = kwargs.get("pose_set", 'hand_body_face')
         llm_name = kwargs.get("llm_name", "mbart-large-50")  # Default to MBart50
+        self.xD_pose = kwargs.get("xD_pose", "2D")  # Default to 2D pose
+        
         self.llm_name = llm_name
 
         self.pose_set = pose_set
@@ -65,7 +67,11 @@ class UniSignNetwork(nn.Module):
         
         
         
-    def forward(self, lh = None, rh = None, body = None, face = None, frame_feat = None, split = 'train', decoder_input_ids = None):
+    def forward(self, lh = None, rh = None, body = None, face = None, 
+                frame_feat = None, split = 'train', decoder_input_ids = None,
+                valid_frame_seq_mask = None,
+                valid_pose_seq_mask = None,
+                ):
         """
         Args:
             lh, rh, body, face: (batch_size, T, N, C) - Pose inputs
@@ -98,7 +104,9 @@ class UniSignNetwork(nn.Module):
 
 
         # LLM Translation
-        return self.llm_model(sign_features, mode = split, decoder_input_ids = decoder_input_ids)  # LLM output embeddings
+        return self.llm_model(sign_features, mode = split, decoder_input_ids = decoder_input_ids,
+                               valid_frame_seq_mask = valid_frame_seq_mask,
+                               valid_pose_seq_mask = valid_pose_seq_mask)  # LLM output embeddings
 
 
 # from sacrebleu import corpus_bleu

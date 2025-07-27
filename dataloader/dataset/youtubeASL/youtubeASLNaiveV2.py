@@ -17,7 +17,7 @@ if __name__ == '__main__':
 
 from utils.mediapipe_kpts_mapping import MediapipeKptsMapping
 
-class How2SignNaiveV2(Dataset):
+class YoutubeASLNaiveV2(Dataset):
     def __init__(self, split, root_dir = None, pose_seq_len = 150, frame_seq_len = 60, **kwargs):
         """
         Initialize the YouTube ASL dataset loader for pre-processed frames.
@@ -49,7 +49,7 @@ class How2SignNaiveV2(Dataset):
         
         
         if root_dir is None:
-            self.root_dir = '/projects/kosecka/hongrui/dataset/how2sign/how2sign_pro_0714'
+            self.root_dir = '/projects/kosecka/hongrui/dataset/youtubeASL/processed_0722'
         else:
             self.root_dir = root_dir
             
@@ -58,15 +58,16 @@ class How2SignNaiveV2(Dataset):
         if split not in ['train', 'val', 'test']:
             raise ValueError(f"Invalid split: {split}. Must be one of 'train', 'val', 'test'.")
         
-        self.split_dir = os.path.join(self.root_dir, self.split)
+        # self.split_dir = os.path.join(self.root_dir, self.split)
+        # self.split_dir = self.root_dir
         
-        self.clip_frame_dir = os.path.join(self.split_dir, 'frames')
-        self.clip_anno_dir = os.path.join(self.split_dir, 'annos')
+        self.clip_frame_dir = os.path.join(self.root_dir, 'frames')
+        self.clip_anno_dir = os.path.join(self.root_dir, 'annos')
         
         if self.use_mini_dataset:
-            self.ann_filepath_txt = os.path.join(self.split_dir, f'mini_{split}_annos_filepath.txt')
+            self.ann_filepath_txt = os.path.join(self.root_dir, f'mini_{split}_annos_filepath.txt')
         else:
-            self.ann_filepath_txt = os.path.join(self.split_dir, f'{split}_annos_filepath.txt')
+            self.ann_filepath_txt = os.path.join(self.root_dir, f'{split}_annos_filepath.txt')
         
         if not os.path.exists(self.ann_filepath_txt):
             annos_files = os.listdir(self.clip_anno_dir)
@@ -264,9 +265,9 @@ class How2SignNaiveV2(Dataset):
             ## to float32
             hand_keypoints_all = all_keypoints[:, :self.num_hand_kpts].astype(np.float32)
             body_keypoints_all = all_keypoints[:, self.num_hand_kpts: self.num_hand_kpts + self.num_body_kpts].astype(np.float32)
-            face_keypoints_all = all_keypoints[:, self.num_hand_kpts + self.num_body_kpts:].astype(np.float32)
-
-
+            face_keypoints_all = all_keypoints[:, self.num_hand_kpts + self.num_body_kpts:,].astype(np.float32)
+        
+                    
             hand_keypoints_all = hand_keypoints_all[selected_pose_seq_indices]
             body_keypoints_all = body_keypoints_all[selected_pose_seq_indices]
             face_keypoints_all = face_keypoints_all[selected_pose_seq_indices]
@@ -390,7 +391,7 @@ if __name__ == '__main__':
     pose_seq_len = 90
     frame_seq_len = 90
     modility = 'pose_rgb'  # 'pose', 'rgb', 'pose_rgb'
-    dataset = How2SignNaiveV2(split, 
+    dataset = YoutubeASLNaiveV2(split, 
                             pose_seq_len=pose_seq_len, 
                             frame_seq_len=frame_seq_len, 
                             modality=modility, 

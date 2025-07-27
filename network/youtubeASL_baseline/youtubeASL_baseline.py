@@ -45,12 +45,12 @@ def get_mbart_encoder(llm_model):
     raise AttributeError(f"Cannot find encoder in model of type {type(llm_model)}")
 
 class YouTubeASLBaseline(nn.Module):
-    """Baseline T5 Model for Sign Language Translation (Pose → T5)"""
     def __init__(self, rgb_input_dim=512, pose_input_dim=138, freeze_llm=False, logger=None, **kwargs):
         super().__init__()
         self.device = kwargs.get("device", "cpu")
         llm_name = kwargs.get("llm_name", "mbart-large-50")  # Default to MBart50
         self.modality = kwargs.get("modality", "pose")  # Default to pose modality
+        self.xD_pose = kwargs.get("xD_pose", "2D")  # Default to 2D pose
         
         self.llm_name = llm_name
         self.hidden_dim = kwargs.get("hidden_dim", 512)  # Default hidden dimension for pose features
@@ -106,7 +106,10 @@ class YouTubeASLBaseline(nn.Module):
 
 
     def forward(self, lh = None, rh = None, body = None, face = None, 
-                frame_feat = None, split = 'train', decoder_input_ids = None, attention_mask=None):
+                frame_feat = None, split = 'train', decoder_input_ids = None, 
+                valid_frame_seq_mask = None,
+                valid_pose_seq_mask = None,
+                ):
         
         """
         Args:
@@ -129,17 +132,18 @@ class YouTubeASLBaseline(nn.Module):
             
             pose_features = self.pose_temporal_encoder(pose_features)  # Temporal encoding for pose features
             # print(f'pose_features.shape: {pose_features.shape}')
+            attention_mask = valid_pose_seq_mask
 
         if "rgb" in self.modality:
             # print(f'frame_feat.shape: {frame_feat.shape}')
             rgb_features = self.rgb_temporal_encoder(frame_feat)  # Temporal encoding for RGB features
             # print(f'rgb_features.shape: {rgb_features.shape}')
-            
+            attention_mask = valid_frame_seq_mask
             
         if "pose" in self.modality and "rgb" in self.modality:
             # Cross-attention between pose and RGB features
             cross_attn_output, _ = self.cross_attention(pose_features, rgb_features, rgb_features)
-            
+            attention_mask = valid_pose_seq_mask | valid_frame_seq_mask
 
         elif "pose" in self.modality and not "rgb" in self.modality:
             cross_attn_output = pose_features
@@ -150,13 +154,17 @@ class YouTubeASLBaseline(nn.Module):
 
         B, T, _ = cross_attn_output.shape
 
-
+        # print('cross_attn_output', cross_attn_output)
         # Linear projection
-        feat_embeds = self.fc(cross_attn_output)
-        feat_embeds = self.norm(feat_embeds)
 
-        if attention_mask is None:
-            attention_mask = torch.ones(B, T, device=cross_attn_output.device)
+        feat_embeds = self.fc(cross_attn_output)
+        # print('feat_embeds', feat_embeds)
+        print("Before norm - mean:", feat_embeds.mean().item(), "std:", feat_embeds.std().item())
+
+        feat_embeds = self.norm(feat_embeds)
+        # print('feat_embeds', feat_embeds)
+        print("After norm - mean:", feat_embeds.mean().item(), "std:", feat_embeds.std().item())
+
 
         encoder = get_mbart_encoder(self.llm_model)
 
@@ -165,7 +173,8 @@ class YouTubeASLBaseline(nn.Module):
             inputs_embeds=feat_embeds,
             attention_mask=attention_mask
         )
-
+        # print('encoder_outputs', encoder_outputs)
+        
         if split == "train":
             if decoder_input_ids is None:
                 raise ValueError("decoder_input_ids must be provided in training mode")
@@ -182,7 +191,7 @@ class YouTubeASLBaseline(nn.Module):
                 max_length=64,
                 num_beams=5,
                 early_stopping=True,
-                decoder_start_token_id=self.decoder_start_token_id
+                forced_bos_token_id=self.decoder_start_token_id
             )
 
             decoded_text = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
@@ -195,17 +204,26 @@ class YouTubeASLBaseline(nn.Module):
 
 if __name__ == "__main__":
     # Example usage
-    batch_size, T, input_dim = 1, 10, 256
-    model = YouTubeASLBaseline(input_dim=input_dim, modality = 'rgb')
-    frame_feat = torch.randn(batch_size, T, input_dim)
+    batch_size, T, pose_input_dim = 3, 10, 138
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Training mode
-    decoder_input_ids = torch.randint(0, 1000, (batch_size, 20))  # Example decoder input IDs
-    logits, encoder_hidden = model(frame_feat = frame_feat, split="train", decoder_input_ids=decoder_input_ids)
-    print("Training logits shape:", logits.shape)
-    print("Encoder hidden shape:", encoder_hidden.shape)
+    modality = 'pose'  # or 'rgb', or 'pose_rgb'
+    model = YouTubeASLBaseline(pose_input_dim=pose_input_dim, modality=modality).to(device)
+    frame_feat = torch.randn(batch_size, T, pose_input_dim).to(device)
+    lh = torch.randn(batch_size, T, 21, 2).to(device)  # Left hand keypoints
+    rh = torch.randn(batch_size, T, 21, 2).to(device)  # Right hand keypoints
+    body = torch.randn(batch_size, T, 9, 2).to(device)  # Body keypoints
+    face = torch.randn(batch_size, T, 18, 2).to(device)  # Face keypoints
+
+    # # Training mode
+    # decoder_input_ids = torch.randint(0, 250054, (batch_size, 20)).to(device)  # Example decoder input IDs
+    # logits, encoder_hidden = model(lh=lh, rh=rh, body=body, face=face,
+    #                                split="train", decoder_input_ids=decoder_input_ids)
+    # print("Training logits shape:", logits.shape)
+    # print("Encoder hidden shape:", encoder_hidden.shape)
 
     # Validation mode
-    decoded_text, encoder_hidden = model(frame_feat = frame_feat, split="val")
+    decoded_text, encoder_hidden = model(lh=lh, rh=rh, body=body, face=face,
+                                         split="val")
     print("Decoded text:", decoded_text)
     print("Encoder hidden shape:", encoder_hidden.shape)

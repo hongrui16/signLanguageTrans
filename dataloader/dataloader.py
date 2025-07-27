@@ -11,8 +11,8 @@ if __name__ == '__main__':
 from dataloader.dataset.youtubeASL.youtubeASL import YouTubeASL
 from dataloader.dataset.youtubeASL.youtubeASLFrames import YouTubeASLFrames
 from dataloader.dataset.youtubeASL.youTubeASLOnlineDet import YouTubeASLOnlineDet
-from dataloader.dataset.youtubeASL.youtubeASLFramesNaive import YouTubeASLFramesNaive
-from dataloader.dataset.youtubeASL.youtubeASLFramesComposed import YouTubeASLFramesComposed
+from dataloader.dataset.youtubeASL.youtubeASLNaiveV2 import YoutubeASLNaiveV2
+
 
 from dataloader.dataset.how2sign.how2sign_openpose import How2SignOpenPose
 from dataloader.dataset.how2sign.how2signNaive import How2SignNaive
@@ -38,6 +38,7 @@ def get_dataloader(
     num_frame_seq = kwargs.get('num_frame_seq', 30)  # Default for
     delete_blury_frames = kwargs.get('delete_blury_frames', False)  # Default for YouTubeASL
     use_mini_dataset = kwargs.get('use_mini_dataset', False)  # Default for debugging
+    xD_pose = kwargs.get('xD_pose', '2D')  # Default for 2D pose
     
     # Log distributed training configuration
     if logger is not None:
@@ -153,6 +154,7 @@ def get_dataloader(
                 frame_seq_len = num_frame_seq,
                 delete_blury_frames = delete_blury_frames,
                 use_mini_dataset = use_mini_dataset,
+                xD_pose = xD_pose,  # Use 2D or 3D pose as specified in the config
             )
 
     else:

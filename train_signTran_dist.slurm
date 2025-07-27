@@ -12,7 +12,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=3               # One task per GPU
 #SBATCH --gres=gpu:A100.80gb:3             # Request 2 A100 GPUs
-#SBATCH --mem=100gb                         # Memory per node
+#SBATCH --mem=50gb                         # Memory per node
 #SBATCH --export=ALL
 #SBATCH --time=4-24:00:00                  # Set to 4 days and 24 hours
 #SBATCH --cpus-per-task=4                  # Number of CPU cores per task
@@ -39,12 +39,6 @@ echo "Random port: $PORT"
 # # Launch distributed training with accelerate
 accelerate launch --num_processes=3 --num_machines=1 --machine_rank=0 --main_process_ip=localhost --main_process_port=$PORT \
     train_signTran_dist.py 2> >(grep -v "absl::InitializeLog" | grep -v "gl_context_egl.cc" | grep -v "gl_context.cc" >&2)
-
-
-
-## debug
-# accelerate launch --num_processes=2 --num_machines=1 --machine_rank=0 --main_process_ip=localhost --main_process_port=39345 \
-#     train_signTran_dist.py --debug 2> >(grep -v "absl::InitializeLog" | grep -v "gl_context_egl.cc" | grep -v "gl_context.cc" >&2)
 
 
 # torchrun --nnodes=${NUM_NODES} --nproc_per_node=${GPUS_PER_NODE} train_VAE.py --debug 

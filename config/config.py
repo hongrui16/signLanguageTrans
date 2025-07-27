@@ -7,10 +7,11 @@ arg_settings = {
     # 'resume': '/scratch/rhong5/weights/temp_training_weights/signLanguageTrans/YouTubeASLFramesNaive/20250611-055348_JID-3719511/uniSign_pose_best.pth',
     'dataset_name': 'How2SignNaiveV2',# 'YouTubeASLFramesNaive', 'YouTubeASLFrames',
     # 'YouTubeASLOnlineDet', 'YouTubeASLFramesComposed', 'How2SignOpenPose', 'How2SignNaive', 'How2SignNaiveV2'
-    "modality": 'pose_rgb', # 'pose', 'rgb', 'pose_rgb',
+    "modality": 'pose', # 'pose', 'rgb', 'pose_rgb',
+    'xD_pose': '2D', # '2D', '3D',
     'finetune': True,
-    'train_batch_size': 15,
-    'eval_batch_size': 15,
+    'train_batch_size': 60,
+    'eval_batch_size': 60,
     'debug': False,
     'max_epochs': 45,
     'eval_log_dir': '',
@@ -20,10 +21,11 @@ arg_settings = {
     'pose_set': 'hand_body_face', # 'hand_body_face', 'body', 'hand', 
     'model_name': 'YouTubeASLBaseline', # 'UniSignNetwork', 'YouTubeASLBaseline'
     'img_encoder_name': 'resnet34', # resnet50, resnet34, dinov2_vits14
-    'num_pose_seq': 60, # 90 for YouTubeASL, 60 for How2Sign
+    'num_pose_seq': 180, # 90 for YouTubeASL, 60 for How2Sign
     'num_frame_seq': 60, # 90 for YouTubeASL,
     'delete_blury_frames': False, # True for YouTubeASL, False for How2Sign
     'freeze_llm_at_early_epochs': 15, # 0 for finetuning the LLM, > 0 for freezing the LLM at early epochs
     'use_mini_dataset': False, # True for debugging, False for full training
-    'use_lora': True, # True to use LoRA for fine-tuning
+    'use_lora': True, # True to use LoRA for fine-tuning    
+    
 }

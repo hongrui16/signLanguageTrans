@@ -73,6 +73,7 @@ class SignTrans:
         self.freeze_llm_at_early_epochs = args.freeze_llm_at_early_epochs
         self.use_mini_dataset = args.use_mini_dataset
         self.use_lora = args.use_lora
+        self.xD_pose = args.xD_pose
         
         
         self.ignore_index = -100 # Used for ignoring padding tokens in loss computation
@@ -189,6 +190,7 @@ class SignTrans:
             num_frame_seq=self.num_frame_seq,
             delete_blury_frames=self.delete_blury_frames,
             use_mini_dataset = self.use_mini_dataset,
+            xD_pose = self.xD_pose,  # Pass xD_pose to the dataloader
         )
         
         val_loader, val_dataset, self.val_sampler = None, None, None
@@ -210,6 +212,7 @@ class SignTrans:
             num_pose_seq=self.num_pose_seq,
             num_frame_seq=self.num_frame_seq,
             delete_blury_frames=self.delete_blury_frames,
+            xD_pose=self.xD_pose,  # Pass xD_pose to the dataloader
         )
 
         test_loader, test_dataset, self.test_sampler = None, None, None
@@ -287,21 +290,28 @@ class SignTrans:
         self.body_indices = [value for key, value in self.body_mapping.items()]
         self.face_indices = [value for key, value in self.face_mapping.items()]
 
-        num_keypoints = {
-            "lh": len(self.hand_indices),
-            "rh": len(self.hand_indices),
-            "body": len(self.body_indices),
-            "face": len(self.face_indices)
-        }
+        # num_keypoints = {
+        #     "lh": len(self.hand_indices),
+        #     "rh": len(self.hand_indices),
+        #     "body": len(self.body_indices),
+        #     "face": len(self.face_indices)
+        # }
 
         pose_input_dim = 0
+        if self.xD_pose == '2D':
+            ratio = 2
+        elif self.xD_pose == '3D':
+            ratio = 3
+        else:
+            raise ValueError(f"Unsupported xD_pose: {self.xD_pose}. Must be '2D' or '3D'.")
         if self.use_pose:
             if 'face' in self.pose_set:
-                pose_input_dim += len(self.face_indices) * 2
+                pose_input_dim += len(self.face_indices) * ratio
             if 'body' in self.pose_set:
-                pose_input_dim += len(self.body_indices) * 2
+                pose_input_dim += len(self.body_indices) * ratio
             if 'hand' in self.pose_set:
-                pose_input_dim += len(self.hand_indices) * 2 * 2
+                pose_input_dim += len(self.hand_indices) * 2 * ratio
+                
         self.logger.info(f"Pose input dimension: {pose_input_dim}", main_process_only=self.accelerator.is_main_process)
         
         if self.use_img_encoder:
@@ -320,7 +330,16 @@ class SignTrans:
                 lora_dropout=0.1,
                 bias="none",
                 task_type=TaskType.SEQ_2_SEQ_LM,
-                )
+            )
+            
+            # lora_config = LoraConfig(
+            #     r=2,
+            #     lora_alpha=4,
+            #     target_modules=["encoder_attn.q_proj", "encoder_attn.v_proj"],  #  只允许 decoder attend encoder
+            #     lora_dropout=0.1,
+            #     bias="none",
+            #     task_type=TaskType.SEQ_2_SEQ_LM,
+            # )
 
             
         self.logger.info("Tokenizer loaded.", main_process_only=self.accelerator.is_main_process)
@@ -332,6 +351,7 @@ class SignTrans:
                 freeze_llm=self.freeze_llm,
                 llm_name=self.llm_name,
                 modality=self.modality,
+                xD_pose=self.xD_pose,  # Pass xD_pose to the model
             )
             self.tokenizer = self.signModel.tokenizer
             self.logger.info(f"Tokenizer vocab size: {self.tokenizer.vocab_size}", main_process_only=self.accelerator.is_main_process)
@@ -349,6 +369,7 @@ class SignTrans:
                                             freeze_llm=self.freeze_llm,
                                             llm_name=self.llm_name,
                                             modality=self.modality,
+                                            xD_pose=self.xD_pose,  # Pass xD_pose to the model
                                             )
             self.tokenizer = self.signModel.llm_model.tokenizer
             self.logger.info(f"Tokenizer vocab size: {self.tokenizer.vocab_size}", main_process_only=self.accelerator.is_main_process)
@@ -404,11 +425,12 @@ class SignTrans:
 
 
     def training(self, dataloader, epoch, mode='train'):
-        if isinstance(self.train_sampler, DistributedSampler):
-            self.train_sampler.set_epoch(epoch)
-            self.logger.info(f"Setting epoch for DistributedSampler: {epoch}, rank: {self.accelerator.process_index}", main_process_only=self.accelerator.is_main_process)
-        else:
-            self.logger.warning(f"Train loader sampler is not DistributedSampler, skipping epoch setting, rank: {self.accelerator.process_index}", main_process_only=self.accelerator.is_main_process)
+        if epoch < 5:
+            if isinstance(self.train_sampler, DistributedSampler):
+                self.train_sampler.set_epoch(epoch)
+                self.logger.info(f"Setting epoch for DistributedSampler: {epoch}, rank: {self.accelerator.process_index}", main_process_only=self.accelerator.is_main_process)
+            else:
+                self.logger.warning(f"Train loader sampler is not DistributedSampler, skipping epoch setting, rank: {self.accelerator.process_index}", main_process_only=self.accelerator.is_main_process)
 
         self.signModel.train()
         
@@ -449,14 +471,31 @@ class SignTrans:
                 progress_bar.update(step_interval)
 
             frames_tensor, text, keypoints_dict = batch
+            valid_frame_seq_mask = keypoints_dict.get('valid_frame_seq_mask', None)
+            if valid_frame_seq_mask is not None:
+                valid_frame_seq_mask = valid_frame_seq_mask.to(self.device).float()
+                # print("valid_frame_seq_mask shape:", valid_frame_seq_mask.shape)
+            valid_pose_seq_mask = keypoints_dict.get('valid_pose_seq_mask', None)
+            if valid_pose_seq_mask is not None:
+                valid_pose_seq_mask = valid_pose_seq_mask.to(self.device).float()
+                # print("valid_pose_seq_mask shape:", valid_pose_seq_mask.shape)
             if self.use_pose:
                 # Move all tensors to the correct device
                 hand_keypoints = keypoints_dict['hand'].to(self.device).float()
                 body_keypoints = keypoints_dict['body'].to(self.device).float()
-                face_keypoints = keypoints_dict['face'].to(self.device).float()                    
+                face_keypoints = keypoints_dict['face'].to(self.device).float()
+                if self.xD_pose == '2D':
+                    hand_keypoints = hand_keypoints[:, :, :, :2].float()
+                    body_keypoints = body_keypoints[:, :, :, :2].float()
+                    face_keypoints = face_keypoints[:, :, :, :2].float()
+                elif self.xD_pose == '3D':
+                    hand_keypoints = hand_keypoints[:, :, :, :3].float()
+                    body_keypoints = body_keypoints[:, :, :, :3].float()
+                    face_keypoints = face_keypoints[:, :, :, :3].float()                    
                 # print("hand_keypoints shape:", hand_keypoints.shape)
                 right_hand_keypoints = hand_keypoints[:, :, :21, :].float()
                 left_hand_keypoints = hand_keypoints[:, :, 21:, :].float()
+                
             else:
                 right_hand_keypoints = None
                 left_hand_keypoints = None
@@ -481,7 +520,9 @@ class SignTrans:
                     body_keypoints,
                     face_keypoints,
                     frame_feat=frame_feat,
-                    decoder_input_ids=decoder_input_ids
+                    decoder_input_ids=decoder_input_ids,
+                    valid_frame_seq_mask = valid_frame_seq_mask,
+                    valid_pose_seq_mask = valid_pose_seq_mask,
                 )
                 loss = self.compute_translation_loss(targets, logits)
                 self.accelerator.backward(loss)
@@ -521,18 +562,19 @@ class SignTrans:
             sampler = self.val_sampler
         elif mode == 'test':
             sampler = self.test_sampler
-
-        if isinstance(sampler, DistributedSampler):
-            sampler.set_epoch(epoch)
-            self.logger.info(
-                f"Setting epoch for {mode} DistributedSampler: {epoch}, rank: {self.accelerator.process_index}",
-                main_process_only=self.accelerator.is_main_process
-            )
-        else:
-            self.logger.warning(
-                f"{mode.capitalize()} loader sampler is not DistributedSampler, skipping epoch setting.",
-                main_process_only=self.accelerator.is_main_process
-            )
+            
+        if epoch < 5:
+            if isinstance(sampler, DistributedSampler):
+                sampler.set_epoch(epoch)
+                self.logger.info(
+                    f"Setting epoch for {mode} DistributedSampler: {epoch}, rank: {self.accelerator.process_index}",
+                    main_process_only=self.accelerator.is_main_process
+                )
+            else:
+                self.logger.warning(
+                    f"{mode.capitalize()} loader sampler is not DistributedSampler, skipping epoch setting.",
+                    main_process_only=self.accelerator.is_main_process
+                )
 
 
 
@@ -565,11 +607,27 @@ class SignTrans:
                     progress_bar.update(step_interval)
 
                 frames_tensor, text, keypoints_dict = batch
+                valid_frame_seq_mask = keypoints_dict.get('valid_frame_seq_mask', None)
+                if valid_frame_seq_mask is not None:
+                    valid_frame_seq_mask = valid_frame_seq_mask.to(self.device).float()
+                    # print("valid_frame_seq_mask shape:", valid_frame_seq_mask.shape)
+                valid_pose_seq_mask = keypoints_dict.get('valid_pose_seq_mask', None)
+                if valid_pose_seq_mask is not None:
+                    valid_pose_seq_mask = valid_pose_seq_mask.to(self.device).float()
+                    # print("valid_pose_seq_mask shape:", valid_pose_seq_mask.shape)
                 if self.use_pose:
                     # Move all tensors to the correct device
                     hand_keypoints = keypoints_dict['hand'].to(self.device).float()
                     body_keypoints = keypoints_dict['body'].to(self.device).float()
-                    face_keypoints = keypoints_dict['face'].to(self.device).float()                    
+                    face_keypoints = keypoints_dict['face'].to(self.device).float()      
+                    if self.xD_pose == '2D':
+                        hand_keypoints = hand_keypoints[:, :, :, :2].float()
+                        body_keypoints = body_keypoints[:, :, :, :2].float()
+                        face_keypoints = face_keypoints[:, :, :, :2].float()
+                    elif self.xD_pose == '3D':
+                        hand_keypoints = hand_keypoints[:, :, :, :3].float()
+                        body_keypoints = body_keypoints[:, :, :, :3].float()
+                        face_keypoints = face_keypoints[:, :, :, :3].float()                
                     # print("hand_keypoints shape:", hand_keypoints.shape)
                     right_hand_keypoints = hand_keypoints[:, :, :21, :].float()
                     left_hand_keypoints = hand_keypoints[:, :, 21:, :].float()
@@ -595,18 +653,24 @@ class SignTrans:
                     face_keypoints,
                     frame_feat=frame_feat,
                     split=mode,
-                    decoder_input_ids=decoder_input_ids
+                    decoder_input_ids=decoder_input_ids,
+                    valid_frame_seq_mask = valid_frame_seq_mask,
+                    valid_pose_seq_mask = valid_pose_seq_mask,
+
                 )
 
-                    
-                for i, pred_text in enumerate(translated_text):
-                    ref_text = text[i]
-                    if step == 0 and i < 2 and self.accelerator.is_main_process:
+                if step == 0 and self.accelerator.is_main_process:
+                    random_idx = np.random.randint(0, len(text), 4)
+                    for idx in random_idx:
+                        ref_text = text[idx]
+                        pred_text = translated_text[idx]
                         self.logger.info(
-                            f"Sample {i} - Predicted: {pred_text[:100]}... | Reference: {ref_text[:100]}...",
+                            f"Sample {idx} - Predicted: {pred_text[:100]}... | Reference: {ref_text[:100]}...",
                             main_process_only=self.accelerator.is_main_process
                         )
-
+                        
+                for i, pred_text in enumerate(translated_text):                                                                                 
+                    ref_text = text[i] 
                     pred_tokens = pred_text.split()
                     ref_tokens = ref_text.split()
 
@@ -623,7 +687,7 @@ class SignTrans:
                             self.logger.warning(f"BLEU-{n} computation failed for sample {i}: {e}")
                             bleu_scores[n].append(0.0)
 
-                if step == 0 and self.accelerator.is_main_process:
+                if epoch == 0 and step == 0 and self.accelerator.is_main_process:
                     self.logger.info(
                         f"GPU memory allocated: {torch.cuda.memory_allocated() / 1024 ** 3:.2f} GB at batch size: {self.train_batch_size}",
                         main_process_only=self.accelerator.is_main_process
@@ -1008,6 +1072,7 @@ def get_args():
     parser.add_argument("--freeze_llm_at_early_epochs", default=arg_settings["freeze_llm_at_early_epochs"], help="Freeze the LLM at early epochs")
     parser.add_argument("--use_mini_dataset", default=arg_settings["use_mini_dataset"], action="store_true", help="Use a mini dataset for debugging")
     parser.add_argument("--use_lora", default=arg_settings["use_lora"], action="store_true", help="Use LoRA for training")
+    parser.add_argument("--xD_pose", type=str, default=arg_settings["xD_pose"], help="Use 2D or 3D pose")
 
     return parser.parse_args()
 

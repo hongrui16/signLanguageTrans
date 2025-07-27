@@ -3,6 +3,7 @@ import torch.nn as nn
 from typing import List, Tuple
 
 from transformers import AutoModel, AutoTokenizer, AutoModelForSeq2SeqLM
+from transformers import MBartForConditionalGeneration, MBart50TokenizerFast
 
 class SignLanguageLLM(nn.Module):
     """Large Language Model for Sign Language Translation"""
@@ -18,13 +19,25 @@ class SignLanguageLLM(nn.Module):
         logger = kwargs.get("logger", None)
 
         
-        self.tokenizer = AutoTokenizer.from_pretrained(
-                model_name,
-                src_lang="en_XX",
-                tgt_lang="en_XX"
-            )
+        # self.tokenizer = AutoTokenizer.from_pretrained(
+        #         model_name,
+        #         src_lang="en_XX",
+        #         tgt_lang="en_XX"
+        #     )
         
-        self.model = AutoModelForSeq2SeqLM.from_pretrained(model_name)  # Use Seq2SeqLM version
+        # self.model = AutoModelForSeq2SeqLM.from_pretrained(model_name)  # Use Seq2SeqLM version
+        
+        if llm_name == "mbart-large-50":
+            self.tokenizer = MBart50TokenizerFast.from_pretrained("facebook/mbart-large-50")
+            self.model = MBartForConditionalGeneration.from_pretrained("facebook/mbart-large-50")
+            self.tokenizer.src_lang = "en_XX"
+            self.tokenizer.tgt_lang = "en_XX"
+            self.decoder_start_token_id = self.tokenizer.lang_code_to_id["en_XX"]            
+
+        else:
+            raise ValueError(f"Unsupported llm_name: {llm_name}. Use 't5-base' or 'mbart-large-50'.")
+        
+        
 
         # 解决 vocab size 不匹配的问题
         # self.model.config.vocab_size = self.tokenizer.vocab_size
@@ -47,7 +60,10 @@ class SignLanguageLLM(nn.Module):
                 param.requires_grad = False
 
 
-    def forward(self, sign_features, mode="train", decoder_input_ids=None, attention_mask=None):
+    def forward(self, sign_features, mode="train", decoder_input_ids=None, 
+                valid_frame_seq_mask=None,
+                valid_pose_seq_mask=None,
+            ):
         """
         Args:
             sign_features: (batch_size, T, 4C) - Aggregated pose features
@@ -66,8 +82,7 @@ class SignLanguageLLM(nn.Module):
         batch_size, T, C = sign_features.shape
 
 
-        if attention_mask is None:
-            attention_mask = torch.ones(batch_size, T).to(sign_features.device)
+        attention_mask = valid_pose_seq_mask
 
 
         # 2️ Encoder forward pass
@@ -101,7 +116,7 @@ class SignLanguageLLM(nn.Module):
                 max_length=max_length,  # Adjust as needed
                 num_beams=5,    # Beam search for better quality
                 early_stopping=True,
-                decoder_start_token_id=self.decoder_start_token_id
+                forced_bos_token_id=self.decoder_start_token_id
 
             )
             translated_text = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
