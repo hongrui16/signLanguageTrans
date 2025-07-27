@@ -58,8 +58,8 @@ class YouTubeASLBaseline(nn.Module):
         if "pose" in self.modality:
             self.pose_projector = nn.Linear(pose_input_dim, self.hidden_dim)  # Project pose features to 512 dim
             self.input_dim = self.hidden_dim  # Update input_dim to match pose projector output
-            # self.pose_temporal_encoder = TemporalEncoder(input_dim=self.hidden_dim)
-            self.pose_temporal_encoder = nn.Identity()
+            self.pose_temporal_encoder = TemporalEncoder(input_dim=self.hidden_dim)
+            # self.pose_temporal_encoder = nn.Identity()
         else:
             self.pose_projector = nn.Identity()
             self.pose_temporal_encoder = nn.Identity()
