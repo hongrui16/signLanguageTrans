@@ -28,8 +28,8 @@ source /home/rhong5/py310Torch/bin/activate
 cd /home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/youtubeASL
 
 ### originally, start_idx was 439985, and end_idx was 510685
-python process_frames_dump_annos_v2.py --start_idx 145564 --end_idx 166359
-
+# python process_frames_dump_annos_v2.py --start_idx 145564 --end_idx 166359
+python /home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/dataloader/dataset/youtubeASL/filter_wrong_text_txt.py
 
 # torchrun --nnodes=${NUM_NODES} --nproc_per_node=${GPUS_PER_NODE} train_VAE.py --debug 
 

@@ -75,6 +75,8 @@ class SignTrans:
         self.use_lora = args.use_lora
         self.xD_pose = args.xD_pose
         
+        if self.use_lora:
+            self.freeze_llm = True  # LoRA requires freezing the LLM
         
         self.ignore_index = -100 # Used for ignoring padding tokens in loss computation
         
@@ -152,6 +154,12 @@ class SignTrans:
         self.start_epoch = 0
         self.best_loss = float('inf')
         self.logger.info(f"model_name: {self.model_name}", main_process_only=self.accelerator.is_main_process)
+        self.logger.info(f"modality: {self.modality}", main_process_only=self.accelerator.is_main_process)
+        self.logger.info(f"xD_pose: {self.xD_pose}", main_process_only=self.accelerator.is_main_process)
+        self.logger.info(f"freeze_llm: {self.freeze_llm}", main_process_only=self.accelerator.is_main_process)
+
+        self.logger.info(f"use_lora: {self.use_lora}", main_process_only=self.accelerator.is_main_process)
+
         self.logger.info(f"resume_path: {self.resume_path}", main_process_only=self.accelerator.is_main_process)
 
         self.logger.info(f"Training epochs: {self.max_epochs}", main_process_only=self.accelerator.is_main_process)
@@ -194,9 +202,7 @@ class SignTrans:
         )
         
         val_loader, val_dataset, self.val_sampler = None, None, None
-        val_split = 'val'
-        if self.dataset_name == 'YouTubeASLFramesNaive':
-            self.dataset_name = 'YouTubeASLFramesComposed'
+
         val_split = 'test'
         val_loader, val_dataset, self.val_sampler = get_dataloader(
             dataset_name=self.dataset_name,
@@ -216,8 +222,7 @@ class SignTrans:
         )
 
         test_loader, test_dataset, self.test_sampler = None, None, None
-        if self.dataset_name == 'YouTubeASLFramesNaive':
-            self.dataset_name = 'YouTubeASLFramesComposed'
+
         # test_loader, test_dataset, self.test_sampler = get_dataloader(
         #     dataset_name=self.dataset_name,
         #     logger=self.logger,
@@ -299,19 +304,19 @@ class SignTrans:
 
         pose_input_dim = 0
         if self.xD_pose == '2D':
-            ratio = 2
+            kpts_ratio = 2
         elif self.xD_pose == '3D':
-            ratio = 3
+            kpts_ratio = 3
         else:
             raise ValueError(f"Unsupported xD_pose: {self.xD_pose}. Must be '2D' or '3D'.")
         if self.use_pose:
             if 'face' in self.pose_set:
-                pose_input_dim += len(self.face_indices) * ratio
+                pose_input_dim += len(self.face_indices) * kpts_ratio
             if 'body' in self.pose_set:
-                pose_input_dim += len(self.body_indices) * ratio
+                pose_input_dim += len(self.body_indices) * kpts_ratio
             if 'hand' in self.pose_set:
-                pose_input_dim += len(self.hand_indices) * 2 * ratio
-                
+                pose_input_dim += len(self.hand_indices) * 2 * kpts_ratio
+
         self.logger.info(f"Pose input dimension: {pose_input_dim}", main_process_only=self.accelerator.is_main_process)
         
         if self.use_img_encoder:
@@ -364,7 +369,9 @@ class SignTrans:
                     self.logger.warning("LoRA model does not support print_trainable_parameters method.", main_process_only=self.accelerator.is_main_process)
 
         elif self.model_name == 'UniSignNetwork':            
-            self.signModel = UniSignNetwork(hidden_dim=256, LLM_name="facebook/mbart-large-50", 
+            self.signModel = UniSignNetwork(
+                kpts_dim = kpts_ratio,
+                hidden_dim=256, LLM_name="facebook/mbart-large-50", 
                                             device=self.device,
                                             freeze_llm=self.freeze_llm,
                                             llm_name=self.llm_name,
@@ -660,7 +667,7 @@ class SignTrans:
                 )
 
                 if step == 0 and self.accelerator.is_main_process:
-                    random_idx = np.random.randint(0, len(text), 4)
+                    random_idx = np.random.choice(len(text), 4, replace=False)
                     for idx in random_idx:
                         ref_text = text[idx]
                         pred_text = translated_text[idx]

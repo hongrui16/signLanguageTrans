@@ -65,9 +65,9 @@ def rewrite_filepaths_text():
     with open(filepath, 'r') as f:
         filepaths = [line.strip() for line in f.readlines()]
         
-    train_filepaths = filepaths[:550000]
-    test_filepaths = filepaths[550000:]
-    
+    train_filepaths = filepaths[:520000]
+    test_filepaths = filepaths[520000:]
+
     train_filepath_txt = '/projects/kosecka/hongrui/dataset/youtubeASL/processed_0722/train_annos_filepath.txt'
     with open(train_filepath_txt, 'w') as f:
         for path in train_filepaths:
@@ -84,10 +84,10 @@ if __name__ == "__main__":
     output_dir = '/projects/kosecka/hongrui/dataset/youtubeASL/processed_0722'
     split = 'all'
     
-    # create_filepath(input_dir, output_dir, split)
+    create_filepath(input_dir, output_dir, split)
 
     # read_filepaths()
+    
+    rewrite_filepaths_text()
     count_filepaths()
-    # rewrite_filepaths_text()
-
     print(f"File paths for {split} split have been created in {output_dir}.")

@@ -58,8 +58,8 @@ class YouTubeASLBaseline(nn.Module):
         if "pose" in self.modality:
             self.pose_projector = nn.Linear(pose_input_dim, self.hidden_dim)  # Project pose features to 512 dim
             self.input_dim = self.hidden_dim  # Update input_dim to match pose projector output
-            self.pose_temporal_encoder = TemporalEncoder(input_dim=self.hidden_dim)
-            # self.pose_temporal_encoder = nn.Identity()
+            # self.pose_temporal_encoder = TemporalEncoder(input_dim=self.hidden_dim)
+            self.pose_temporal_encoder = nn.Identity()
         else:
             self.pose_projector = nn.Identity()
             self.pose_temporal_encoder = nn.Identity()
@@ -90,16 +90,20 @@ class YouTubeASLBaseline(nn.Module):
 
 
         if logger:
-            logger.info(f"Loaded LLM model: {llm_name}")
-            
-            logger.info(f"Modality: {self.modality}")
-            logger.info(f"Freeze LLM parameters: {freeze_llm}")
+            logger.info(f"Loaded LLM model: {llm_name}", main_process_only=True)
+            self.logger.info(f'self.llm_dim: {self.llm_dim}', main_process_only=True)
+            logger.info(f"Modality: {self.modality}", main_process_only=True)
+            logger.info(f"Freeze LLM parameters: {freeze_llm}", main_process_only=True)
             if freeze_llm:
-                logger.info("Freezing LLM parameters.")
+                logger.info("Freezing LLM parameters.", main_process_only=True)
+            else:
+                logger.info("LLM parameters will be trained.")
         else:
             print(f"Loaded  {llm_name}")
             if freeze_llm:
                 print("Freezing LLM parameters.")
+            else:
+                print("LLM parameters will be trained.")
 
         if freeze_llm:
             for param in self.llm_model.parameters():

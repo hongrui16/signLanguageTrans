@@ -55,7 +55,7 @@ class Mediapipe3DPose:
         # self.yolo_model.fuse()  # Fuse model for faster inference
 
         print('finished loading YOLOv8 model')
-        self.keypoints_threshold = 0.35  # Confidence threshold for keypoint detection
+        self.keypoints_threshold = 0.25  # Confidence threshold for keypoint detection
         
         
         self.anno_info_lists = self.parse_annotation(self.anno_file)

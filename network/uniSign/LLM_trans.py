@@ -50,12 +50,13 @@ class SignLanguageLLM(nn.Module):
             logger.info(f"Tokenizer vocab size: {self.tokenizer.vocab_size}")
             if freeze_llm:
                 logger.info("Freezing LLM parameters")
+            else:
+                logger.info("LLM parameters will be trained")
         else:
             print(f"Using model: {model_name}")
             print(f"Model vocab size: {self.model.config.vocab_size}")
             print(f"Tokenizer vocab size: {self.tokenizer.vocab_size}")
         if freeze_llm:
-            print("Freezing LLM parameters")
             for param in self.model.parameters():
                 param.requires_grad = False
 
