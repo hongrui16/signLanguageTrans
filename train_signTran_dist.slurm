@@ -4,7 +4,7 @@
 ##############################################################
 
 
-#SBATCH --partition=gpuq                    # need to set 'gpuq' or 'contrib-gpuq' partition
+#SBATCH --partition=contrib-gpuq                    # need to set 'gpuq' or 'contrib-gpuq' partition
 #SBATCH --qos=gpu                           # need to select 'gpu' QOS or other relevant QOS
 #SBATCH --job-name=signTrans                   # Job name
 #SBATCH --output=/home/rhong5/research_pro/hand_modeling_pro/signLanguageTrans/zlog/zslurm/%x-%N-%j.out   # Output file

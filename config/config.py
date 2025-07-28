@@ -5,12 +5,12 @@ arg_settings = {
 
     "resume": None, 
     # 'resume': '/scratch/rhong5/weights/temp_training_weights/signLanguageTrans/YouTubeASLFramesNaive/20250611-055348_JID-3719511/uniSign_pose_best.pth',
-    'dataset_name': 'YoutubeASLNaiveV2',# 'YoutubeASLNaiveV2', 'How2SignNaiveV2'
+    'dataset_name': 'How2SignNaiveV2',# 'YoutubeASLNaiveV2', 'How2SignNaiveV2'
     "modality": 'pose', # 'pose', 'rgb', 'pose_rgb',
     'xD_pose': '3D', # '2D', '3D',
     'finetune': True,
-    'train_batch_size': 80,
-    'eval_batch_size': 80,
+    'train_batch_size': 60,
+    'eval_batch_size': 60,
     'debug': False,
     'max_epochs': 45,
     'eval_log_dir': '',
@@ -18,7 +18,7 @@ arg_settings = {
     'freeze_llm': True, #True, # False for finetuning the LLM, True for freezing the LLM
     'llm_name': 'mbart-large-50', # 't5-base', 't5-large', 't5-xl', 't5-xxl', 'google/flan-t5-base', 'google/flan-t5-large', 'google/flan-t5-xl', 'google/flan-t5-xxl', 'facebook/mbart-large-50'
     'pose_set': 'hand_body_face', # 'hand_body_face', 'body', 'hand', 
-    'model_name': 'YouTubeASLBaseline', # 'UniSignNetwork', 'YouTubeASLBaseline'
+    'model_name': 'UniSignNetwork', # 'UniSignNetwork', 'YouTubeASLBaseline'
     'img_encoder_name': 'resnet34', # resnet50, resnet34, dinov2_vits14
     'num_pose_seq': 200, # 90 for YouTubeASL, 60 for How2Sign
     'num_frame_seq': 60, # 90 for YouTubeASL,

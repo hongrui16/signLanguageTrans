@@ -38,6 +38,7 @@ from network.uniSign.feature_encoder import get_encoder
 from dataloader.dataloader import get_dataloader
 from utils.mediapipe_kpts_mapping import MediapipeKptsMapping
 from config.config import arg_settings
+from utils.git_version_control import auto_git_commit_and_push_on_dev
 
 # Set up logging to suppress unnecessary outputs
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
@@ -150,6 +151,10 @@ class SignTrans:
         self.logger.info(f"\n{os.path.basename(__file__)}\n", main_process_only=self.accelerator.is_main_process)
         self.logger.info(f'logging_dir: {self.log_dir}', main_process_only=self.accelerator.is_main_process)
         self.logger.info(f'output_ckpts_dir: {self.ckpt_dir}\n', main_process_only=self.accelerator.is_main_process)
+        
+        # commit_hash = auto_git_commit_and_push_on_dev(push=True)
+        # self.logger.info(f"Git commit hash (dev): {commit_hash}", main_process_only=self.accelerator.is_main_process)
+
 
         self.start_epoch = 0
         self.best_loss = float('inf')
